@@ -1,22 +1,25 @@
 {
   "name": "silva-md-bot",
   "version": "3.0.0",
-  "description": "Modern WhatsApp Bot with Advanced Features",
+  "description": "Modern WhatsApp Bot with Advanced Features and Plugin System",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "setup": "node setup.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "postinstall": "echo 'Silva MD Bot dependencies installed successfully!'"
+    "heroku-postbuild": "echo 'Silva MD Bot deployed successfully!'"
   },
   "keywords": [
     "whatsapp",
     "bot",
     "baileys",
     "silva",
-    "md"
+    "whatsapp-bot",
+    "automation",
+    "plugin-system"
   ],
-  "author": "Silva Tech",
+  "author": "Silva Tech Nexus",
   "license": "MIT",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.5.0",
@@ -36,7 +39,15 @@
     "pino": "^8.16.1",
     "lodash": "^4.17.21",
     "mime-types": "^2.1.35",
-    "os": "^0.1.2"
+    "cheerio": "^1.0.0-rc.12",
+    "ytdl-core": "^4.11.5",
+    "yt-search": "^2.10.4",
+    "g-i-s": "^2.1.6",
+    "translate-google": "^1.5.0",
+    "cowsay": "^1.5.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0",
