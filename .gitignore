@@ -1,0 +1,16 @@
+node_modules/
+sessions/
+.env
+.DS_Store
+*.log
+*.tmp
+*.temp
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vscode/
+.idea/
+*.zip
+*.tar
+*.gz
+assets/downloads/
