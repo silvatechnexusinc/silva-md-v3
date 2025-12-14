@@ -27,9 +27,9 @@ const globalContextInfo = {
     isForwarded: true
 };
 
-// Proper pino logger
+// Proper pino logger with reduced verbosity
 const logger = pino({
-    level: config.DEBUG_MODE ? 'debug' : 'warn',
+    level: 'error', // Changed from 'warn' to 'error' to reduce noise
     transport: config.DEBUG_MODE ? {
         target: 'pino-pretty',
         options: {
@@ -67,6 +67,7 @@ async function loadSession() {
             fs.mkdirSync('./sessions', { recursive: true });
         }
         
+        // Clean old sessions
         if (fs.existsSync(credsPath)) {
             try {
                 fs.unlinkSync(credsPath);
@@ -429,7 +430,7 @@ module.exports = { handler };`;
     }
 }
 
-// Main Bot Class
+// Main Bot Class with FIXED message handling
 class SilvaBot {
     constructor() {
         this.sock = null;
@@ -486,6 +487,7 @@ class SilvaBot {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
+            // FIXED: Better connection settings
             this.sock = makeWASocket({
                 version,
                 logger: logger,
@@ -501,12 +503,26 @@ class SilvaBot {
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
                 getMessage: async (key) => await this.store.getMessage(key),
                 retryRequestDelayMs: 3000,
-                connectTimeoutMs: 30000,
+                connectTimeoutMs: 60000, // Increased for Heroku
                 keepAliveIntervalMs: 25000,
                 emitOwnEvents: true,
-                printQRInTerminal: true,
                 fireInitQueries: true,
-                mobile: false
+                mobile: false,
+                // FIX: Add these to ignore status and reduce decryption errors
+                shouldIgnoreJid: (jid) => {
+                    // Ignore status broadcasts and newsletter
+                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                },
+                // FIX: Better message handling
+                getMessage: async (key) => {
+                    try {
+                        return await this.store.getMessage(key);
+                    } catch (error) {
+                        return null;
+                    }
+                },
+                // FIX: Reduce logging
+                printQRInTerminal: false
             });
 
             this.setupEvents(saveCreds);
@@ -567,9 +583,10 @@ class SilvaBot {
                             await this.sendMessage(ownerJid, {
                                 text: '✅ *' + config.BOT_NAME + ' Connected!*\\nMode: ' + (config.BOT_MODE || 'public') + '\\nTime: ' + new Date().toLocaleString()
                             });
+                            botLogger.log('INFO', 'Sent connected message to owner');
                         }
                     } catch (error) {
-                        // Silent fail
+                        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
                     }
                 }
             }
@@ -581,7 +598,16 @@ class SilvaBot {
             try {
                 await this.handleMessages(m);
             } catch (error) {
-                botLogger.log('ERROR', "Messages error: " + error.message);
+                botLogger.log('ERROR', "Messages upsert error: " + error.message);
+            }
+        });
+
+        // FIX: Listen to all message types
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                if (update.update) {
+                    botLogger.log('DEBUG', 'Message update received');
+                }
             }
         });
 
@@ -593,11 +619,17 @@ class SilvaBot {
                         await this.sendMessage(event.id, {
                             text: '🤖 *' + config.BOT_NAME + ' Activated!*\\nType ' + config.PREFIX + 'menu for commands'
                         });
+                        botLogger.log('INFO', 'Bot added to group: ' + event.id);
                     }
                 }
             } catch (error) {
                 // Silent fail
             }
+        });
+
+        // FIX: Listen to presence updates (optional)
+        sock.ev.on('presence.update', (update) => {
+            // Handle presence updates if needed
         });
     }
 
@@ -627,27 +659,44 @@ class SilvaBot {
             if (fs.existsSync(sessionsDir)) {
                 fs.rmSync(sessionsDir, { recursive: true, force: true });
                 fs.mkdirSync(sessionsDir, { recursive: true });
+                botLogger.log('INFO', 'Sessions cleaned');
             }
         } catch (error) {
             // Silent fail
         }
     }
 
+    // FIXED: Better message handling
     async handleMessages(m) {
-        if (!m.messages || !Array.isArray(m.messages)) return;
+        if (!m.messages || !Array.isArray(m.messages)) {
+            return;
+        }
         
         for (const message of m.messages) {
             try {
-                if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') {
+                // Skip status broadcasts and newsletter messages
+                if (message.key.remoteJid === 'status@broadcast' || 
+                    message.key.remoteJid.includes('@newsletter') ||
+                    message.key.remoteJid.includes('@broadcast')) {
                     continue;
                 }
 
+                // Skip messages from the bot itself
+                if (message.key.fromMe) {
+                    continue;
+                }
+
+                // Store message
                 await this.store.setMessage(message.key, message);
 
                 const jid = message.key.remoteJid;
                 const sender = message.key.participant || jid;
                 const isGroup = jid.endsWith('@g.us');
+                
+                // Debug log for received messages
+                botLogger.log('DEBUG', 'Message received from: ' + sender + ' in: ' + jid);
 
+                // Extract text from message
                 let text = '';
                 if (message.message?.conversation) {
                     text = message.message.conversation;
@@ -657,20 +706,32 @@ class SilvaBot {
                     text = message.message.imageMessage.caption;
                 } else if (message.message?.videoMessage?.caption) {
                     text = message.message.videoMessage.caption;
+                } else if (message.message?.documentMessage?.caption) {
+                    text = message.message.documentMessage.caption;
                 }
 
-                if (text.startsWith(config.PREFIX)) {
+                // Log command attempts
+                if (text) {
+                    botLogger.log('INFO', 'Message text: ' + text.substring(0, 50));
+                }
+
+                // Check if message starts with prefix
+                if (text && text.startsWith(config.PREFIX)) {
+                    botLogger.log('INFO', 'Command detected: ' + text);
+                    
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
+                    // Check if user is allowed
                     if (!this.functions.isAllowed(sender, jid)) {
                         if (config.BOT_MODE === 'private') {
                             await this.sock.sendMessage(jid, {
-                                text: '🔒 Private mode: Contact owner.'
+                                text: '🔒 Private mode: Contact owner for access.'
                             }, { quoted: message });
                         }
                         continue;
                     }
                     
+                    // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
                         text: cmdText,
                         jid,
@@ -682,11 +743,13 @@ class SilvaBot {
                         bot: this
                     });
                     
+                    // If no plugin handled it, try built-in commands
                     if (!executed) {
                         const args = cmdText.split(/ +/);
                         const command = args.shift().toLowerCase();
                         
                         if (this.commands[command]) {
+                            botLogger.log('INFO', 'Executing built-in command: ' + command);
                             await this.commands[command]({
                                 jid,
                                 sender,
@@ -695,17 +758,24 @@ class SilvaBot {
                                 message,
                                 sock: this.sock
                             });
+                        } else {
+                            // Auto reply for unknown commands
+                            if (config.AUTO_REPLY) {
+                                await this.sock.sendMessage(jid, {
+                                    text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
+                                }, { quoted: message });
+                            }
                         }
                     }
                 }
 
             } catch (error) {
-                botLogger.log('ERROR', "Message handling error: " + error.message);
+                botLogger.log('ERROR', "Message handling error: " + error.message + " - Stack: " + error.stack);
             }
         }
     }
 
-    // Command handlers
+    // Command handlers with better error handling
     async helpCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
@@ -730,7 +800,12 @@ class SilvaBot {
         
         helpText += '\\n📍 *Silva Tech Nexus*';
         
-        await sock.sendMessage(jid, { text: helpText }, { quoted: message });
+        try {
+            await sock.sendMessage(jid, { text: helpText }, { quoted: message });
+            botLogger.log('INFO', 'Help command executed successfully');
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to send help: ' + error.message);
+        }
     }
 
     async menuCommand(context) {
@@ -755,77 +830,111 @@ class SilvaBot {
                         '│\\n' +
                         '│ └─「 *SILVA TECH* 」';
         
-        await sock.sendMessage(jid, { text: menuText }, { quoted: message });
+        try {
+            await sock.sendMessage(jid, { text: menuText }, { quoted: message });
+            botLogger.log('INFO', 'Menu command executed successfully');
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to send menu: ' + error.message);
+        }
     }
 
     async pingCommand(context) {
         const { jid, sock, message } = context;
-        const start = Date.now();
-        await sock.sendMessage(jid, { text: '🏓 Pong!' }, { quoted: message });
-        const latency = Date.now() - start;
-        
-        await sock.sendMessage(jid, {
-            text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
-        }, { quoted: message });
+        try {
+            const start = Date.now();
+            await sock.sendMessage(jid, { text: '🏓 Pong!' }, { quoted: message });
+            const latency = Date.now() - start;
+            
+            await sock.sendMessage(jid, {
+                text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
+            }, { quoted: message });
+            botLogger.log('INFO', 'Ping command executed successfully');
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to send ping: ' + error.message);
+        }
     }
 
     async ownerCommand(context) {
         const { jid, sock, message } = context;
         if (config.OWNER_NUMBER) {
-            await sock.sendMessage(jid, {
-                text: '👑 *Bot Owner*\\n\\n📞 ' + config.OWNER_NUMBER + '\\n🤖 ' + config.BOT_NAME + '\\n⚡ v' + config.VERSION
-            }, { quoted: message });
+            try {
+                await sock.sendMessage(jid, {
+                    text: '👑 *Bot Owner*\\n\\n📞 ' + config.OWNER_NUMBER + '\\n🤖 ' + config.BOT_NAME + '\\n⚡ v' + config.VERSION
+                }, { quoted: message });
+                botLogger.log('INFO', 'Owner command executed successfully');
+            } catch (error) {
+                botLogger.log('ERROR', 'Failed to send owner info: ' + error.message);
+            }
         }
     }
 
     async statsCommand(context) {
         const { jid, sock, message } = context;
-        const statsText = '📊 *Bot Statistics*\\n\\n' +
-                         '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
-                         '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n' +
-                         '📦 Platform: ' + process.platform + '\\n' +
-                         '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\n' +
-                         '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
-                         '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION;
-        
-        await sock.sendMessage(jid, { text: statsText }, { quoted: message });
+        try {
+            const statsText = '📊 *Bot Statistics*\\n\\n' +
+                             '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
+                             '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n' +
+                             '📦 Platform: ' + process.platform + '\\n' +
+                             '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\n' +
+                             '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
+                             '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION;
+            
+            await sock.sendMessage(jid, { text: statsText }, { quoted: message });
+            botLogger.log('INFO', 'Stats command executed successfully');
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to send stats: ' + error.message);
+        }
     }
 
     async pluginsCommand(context) {
         const { jid, sock, message } = context;
-        const plugins = this.pluginManager.getCommandList();
-        let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
-        
-        if (plugins.length === 0) {
-            pluginsText += 'No plugins loaded.\\nCheck silvaxlab folder.';
-        } else {
-            for (const plugin of plugins) {
-                pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\n';
+        try {
+            const plugins = this.pluginManager.getCommandList();
+            let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
+            
+            if (plugins.length === 0) {
+                pluginsText += 'No plugins loaded.\\nCheck silvaxlab folder.';
+            } else {
+                for (const plugin of plugins) {
+                    pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\n';
+                }
             }
+            
+            await sock.sendMessage(jid, { text: pluginsText }, { quoted: message });
+            botLogger.log('INFO', 'Plugins command executed successfully');
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to send plugins list: ' + error.message);
         }
-        
-        await sock.sendMessage(jid, { text: pluginsText }, { quoted: message });
     }
 
     async startCommand(context) {
         const { jid, sock, message } = context;
-        const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
-                         'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
-                         'Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                         'Prefix: ' + config.PREFIX + '\\n\\n' +
-                         'Type ' + config.PREFIX + 'help for commands';
-        
-        await sock.sendMessage(jid, { 
-            text: startText
-        }, { quoted: message });
+        try {
+            const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
+                             'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
+                             'Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
+                             'Prefix: ' + config.PREFIX + '\\n\\n' +
+                             'Type ' + config.PREFIX + 'help for commands';
+            
+            await sock.sendMessage(jid, { 
+                text: startText
+            }, { quoted: message });
+            botLogger.log('INFO', 'Start command executed successfully');
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to send start message: ' + error.message);
+        }
     }
 
     async sendMessage(jid, content, options = {}) {
         try {
             if (this.sock && this.isConnected) {
-                return await this.sock.sendMessage(jid, content, { ...globalContextInfo, ...options });
+                const result = await this.sock.sendMessage(jid, content, { ...globalContextInfo, ...options });
+                botLogger.log('DEBUG', 'Message sent to: ' + jid);
+                return result;
+            } else {
+                botLogger.log('WARNING', 'Cannot send message: Bot not connected');
+                return null;
             }
-            return null;
         } catch (error) {
             botLogger.log('ERROR', "Send error: " + error.message);
             return null;
