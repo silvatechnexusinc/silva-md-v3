@@ -11,17 +11,8 @@
     "whatsapp-bot",
     "automation"
   ],
-  "buildpacks": [
-    {
-      "url": "heroku/nodejs"
-    },
-    {
-      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest"
-    },
-    {
-      "url": "https://github.com/clhuang/heroku-buildpack-webp-binaries.git"
-    }
-  ],
+  "success_url": "/",
+  "stack": "heroku-24",
   "env": {
     "SESSION_ID": {
       "description": "Your WhatsApp session ID in format: Silva~base64_compressed_session",
@@ -50,10 +41,16 @@
       "required": false
     }
   },
-  "formation": {
-    "web": {
-      "quantity": 1,
-      "size": "free"
+   "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest"
+    },
+    {
+      "url": "https://github.com/clhuang/heroku-buildpack-webp-binaries.git"
     }
+  ]
   }
 }
