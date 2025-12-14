@@ -270,7 +270,7 @@ const handler = {
             
             if (!mime) {
                 return await sock.sendMessage(jid, {
-                    text: '🖼️ How to use sticker command:\\n\\n1. Send an image/video\\n2. Add caption ".sticker"\\n3. Or reply to media with ".sticker"'
+                    text: '🖼️ How to use sticker command:\\n\\n1. Send an image/video\\n2. Add caption \\".sticker\\"\\n3. Or reply to media with \\".sticker\\"'
                 }, { quoted: message });
             }
             
@@ -809,8 +809,14 @@ class SilvaBot {
 
     async startCommand(context) {
         const { jid, sock, message } = context;
+        const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
+                         'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
+                         'Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
+                         'Prefix: ' + config.PREFIX + '\\n\\n' +
+                         'Type ' + config.PREFIX + 'help for commands';
+        
         await sock.sendMessage(jid, { 
-            text: '✨ *Welcome to Silva MD!*\\n\\nI\\'m an advanced WhatsApp bot with plugin support.\\n\\nType ' + config.PREFIX + 'help for commands' 
+            text: startText
         }, { quoted: message });
     }
 
