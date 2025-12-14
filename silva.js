@@ -96,7 +96,7 @@ async function loadSession() {
         botLogger.log('SUCCESS', "✅ Session loaded successfully");
         return true;
     } catch (e) {
-        botLogger.log('ERROR', `Session Error: ${e.message}`);
+        botLogger.log('ERROR', "Session Error: " + e.message);
         return false;
     }
 }
@@ -207,7 +207,7 @@ class PluginManager {
             
             if (!fs.existsSync(pluginDir)) {
                 fs.mkdirSync(pluginDir, { recursive: true });
-                botLogger.log('INFO', `Created plugin directory: ${dir}`);
+                botLogger.log('INFO', "Created plugin directory: " + dir);
                 this.createExamplePlugins(pluginDir);
                 return;
             }
@@ -215,7 +215,7 @@ class PluginManager {
             const pluginFiles = fs.readdirSync(pluginDir)
                 .filter(file => file.endsWith('.js') && !file.startsWith('_'));
 
-            botLogger.log('INFO', `Found ${pluginFiles.length} plugin(s) in ${dir}`);
+            botLogger.log('INFO', "Found " + pluginFiles.length + " plugin(s) in " + dir);
 
             for (const file of pluginFiles) {
                 try {
@@ -238,22 +238,22 @@ class PluginManager {
                             filename: file
                         });
                         
-                        botLogger.log('SUCCESS', `✅ Loaded plugin: ${file.replace('.js', '')}`);
+                        botLogger.log('SUCCESS', "✅ Loaded plugin: " + file.replace('.js', ''));
                     } else {
-                        botLogger.log('WARNING', `Plugin ${file} has invalid format`);
+                        botLogger.log('WARNING', "Plugin " + file + " has invalid format");
                     }
                 } catch (error) {
-                    botLogger.log('ERROR', `Failed to load plugin ${file}: ${error.message}`);
+                    botLogger.log('ERROR', "Failed to load plugin " + file + ": " + error.message);
                 }
             }
         } catch (error) {
-            botLogger.log('ERROR', `Plugin loading error: ${error.message}`);
+            botLogger.log('ERROR', "Plugin loading error: " + error.message);
         }
     }
 
     createExamplePlugins(pluginDir) {
-        const examplePlugins = {
-            'sticker.js': `// Sticker plugin
+        // Create simple plugins
+        const stickerPlugin = `// Sticker plugin
 const handler = {
     help: ['sticker', 'stiker'],
     tags: ['media'],
@@ -270,27 +270,30 @@ const handler = {
             
             if (!mime) {
                 return await sock.sendMessage(jid, {
-                    text: '🖼️ *How to use sticker command:*\\n\\n1. Send an image/video\\n2. Add caption ".sticker"\\n3. Or reply to media with ".sticker"'
+                    text: '🖼️ How to use sticker command:\\n\\n1. Send an image/video\\n2. Add caption ".sticker"\\n3. Or reply to media with ".sticker"'
                 }, { quoted: message });
             }
             
             await sock.sendMessage(jid, { text: '🎨 Creating sticker...' }, { quoted: message });
+            
+            // Simulate sticker processing
+            const { delay } = require('@whiskeysockets/baileys');
             await delay(1000);
             
             await sock.sendMessage(jid, {
-                text: '✅ *Sticker Created!*\\n\\nThis is a demo. In real implementation, the sticker would be sent.'
+                text: '✅ Sticker Created!\\n\\nThis is a demo. In real implementation, the sticker would be sent.'
             }, { quoted: message });
         } catch (error) {
             await sock.sendMessage(jid, {
-                text: \`❌ Error: \${error.message}\`
+                text: '❌ Error: ' + error.message
             }, { quoted: message });
         }
     }
 };
 
-module.exports = { handler };
-`,
-            'ping.js': `// Ping command
+module.exports = { handler };`;
+
+        const pingPlugin = `// Ping command
 const handler = {
     help: ['ping'],
     tags: ['info'],
@@ -306,14 +309,14 @@ const handler = {
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: \`*Ping Statistics:*\\n\\n⚡ Latency: \${latency}ms\\n📊 Uptime: \${(process.uptime() / 3600).toFixed(2)}h\\n💾 RAM: \${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB\`
+            text: '*Ping Statistics:*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB'
         }, { quoted: message });
     }
 };
 
-module.exports = { handler };
-`,
-            'menu.js': `// Menu command
+module.exports = { handler };`;
+
+        const menuPlugin = `// Menu command
 const config = require('../config.js');
 const handler = {
     help: ['menu'],
@@ -325,35 +328,39 @@ const handler = {
     owner: false,
     
     execute: async ({ jid, sock, message }) => {
-        const menuText = \`┌─「 *SILVA MD* 」─
-│
-│ ⚡ *BOT STATUS*
-│ • Mode: \${config.BOT_MODE || 'public'}
-│ • Prefix: \${config.PREFIX}
-│ • Version: \${config.VERSION}
-│
-│ 📋 *AVAILABLE COMMANDS*
-│ • \${config.PREFIX}ping - Check bot status
-│ • \${config.PREFIX}sticker - Create sticker
-│ • \${config.PREFIX}owner - Show owner info
-│ • \${config.PREFIX}help - Show help
-│ • \${config.PREFIX}menu - This menu
-│ • \${config.PREFIX}plugins - List plugins
-│ • \${config.PREFIX}stats - Bot statistics
-│
-│ └─「 *SILVA TECH* 」\`;
+        const menuText = '┌─「 *SILVA MD* 」─\\n' +
+                        '│\\n' +
+                        '│ ⚡ *BOT STATUS*\\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\\n' +
+                        '│ • Version: ' + config.VERSION + '\\n' +
+                        '│\\n' +
+                        '│ 📋 *AVAILABLE COMMANDS*\\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
+                        '│\\n' +
+                        '│ └─「 *SILVA TECH* 」';
         
         await sock.sendMessage(jid, { text: menuText }, { quoted: message });
     }
 };
 
-module.exports = { handler };
-`
-        };
+module.exports = { handler };`;
 
-        for (const [filename, content] of Object.entries(examplePlugins)) {
-            fs.writeFileSync(path.join(pluginDir, filename), content.trim());
-            botLogger.log('INFO', `Created example plugin: ${filename}`);
+        const plugins = [
+            { name: 'sticker.js', content: stickerPlugin },
+            { name: 'ping.js', content: pingPlugin },
+            { name: 'menu.js', content: menuPlugin }
+        ];
+
+        for (const plugin of plugins) {
+            fs.writeFileSync(path.join(pluginDir, plugin.name), plugin.content);
+            botLogger.log('INFO', "Created example plugin: " + plugin.name);
         }
     }
 
@@ -396,9 +403,9 @@ module.exports = { handler };
                     return true;
                     
                 } catch (error) {
-                    botLogger.log('ERROR', `Command error: ${error.message}`);
+                    botLogger.log('ERROR', "Command error: " + error.message);
                     await sock.sendMessage(jid, { 
-                        text: \`❌ Error: \${error.message}\` 
+                        text: '❌ Error: ' + error.message
                     }, { quoted: message });
                     return true;
                 }
@@ -450,8 +457,8 @@ class SilvaBot {
 
     async init() {
         try {
-            botLogger.log('BOT', `🚀 Starting ${config.BOT_NAME} v${config.VERSION}`);
-            botLogger.log('INFO', `Mode: ${config.BOT_MODE || 'public'}`);
+            botLogger.log('BOT', "🚀 Starting " + config.BOT_NAME + " v" + config.VERSION);
+            botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
             
             if (config.SESSION_ID) {
                 await loadSession();
@@ -460,7 +467,7 @@ class SilvaBot {
             await this.pluginManager.loadPlugins('silvaxlab');
             await this.connect();
         } catch (error) {
-            botLogger.log('ERROR', `Init failed: ${error.message}`);
+            botLogger.log('ERROR', "Init failed: " + error.message);
             setTimeout(() => this.init(), 10000);
         }
     }
@@ -506,16 +513,16 @@ class SilvaBot {
             botLogger.log('SUCCESS', '✅ Bot initialized');
             this.reconnectAttempts = 0;
         } catch (error) {
-            botLogger.log('ERROR', `Connection error: ${error.message}`);
+            botLogger.log('ERROR', "Connection error: " + error.message);
             await this.handleReconnect(error);
         }
     }
 
     async handleReconnect(error) {
-        const delay = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
-        botLogger.log('WARNING', `Reconnecting in ${delay/1000}s (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+        const delayTime = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
+        botLogger.log('WARNING', "Reconnecting in " + (delayTime/1000) + "s (Attempt " + this.reconnectAttempts + "/" + this.maxReconnectAttempts + ")");
         
-        await this.functions.sleep(delay);
+        await this.functions.sleep(delayTime);
         await this.connect();
     }
 
@@ -536,7 +543,7 @@ class SilvaBot {
                 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 
-                botLogger.log('WARNING', `Connection closed. Status: ${statusCode}`);
+                botLogger.log('WARNING', "Connection closed. Status: " + statusCode);
                 
                 if (statusCode === DisconnectReason.loggedOut) {
                     botLogger.log('ERROR', 'Logged out. Please scan QR again.');
@@ -558,7 +565,7 @@ class SilvaBot {
                         const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
                         if (ownerJid) {
                             await this.sendMessage(ownerJid, {
-                                text: `✅ *${config.BOT_NAME} Connected!*\\nMode: ${config.BOT_MODE || 'public'}\\nTime: ${new Date().toLocaleString()}`
+                                text: '✅ *' + config.BOT_NAME + ' Connected!*\\nMode: ' + (config.BOT_MODE || 'public') + '\\nTime: ' + new Date().toLocaleString()
                             });
                         }
                     } catch (error) {
@@ -574,7 +581,7 @@ class SilvaBot {
             try {
                 await this.handleMessages(m);
             } catch (error) {
-                botLogger.log('ERROR', `Messages error: ${error.message}`);
+                botLogger.log('ERROR', "Messages error: " + error.message);
             }
         });
 
@@ -584,7 +591,7 @@ class SilvaBot {
                     const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
                     if (event.action === 'add' && event.participants.includes(botJid)) {
                         await this.sendMessage(event.id, {
-                            text: `🤖 *${config.BOT_NAME} Activated!*\\nType ${config.PREFIX}menu for commands`
+                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\\nType ' + config.PREFIX + 'menu for commands'
                         });
                     }
                 }
@@ -693,7 +700,7 @@ class SilvaBot {
                 }
 
             } catch (error) {
-                botLogger.log('ERROR', `Message handling error: ${error.message}`);
+                botLogger.log('ERROR', "Message handling error: " + error.message);
             }
         }
     }
@@ -703,50 +710,50 @@ class SilvaBot {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
         
-        let helpText = `*${config.BOT_NAME} Help Menu*\n\n`;
-        helpText += `Prefix: ${config.PREFIX}\n`;
-        helpText += `Mode: ${config.BOT_MODE || 'public'}\n\n`;
-        helpText += `*Built-in Commands:*\n`;
-        helpText += `• ${config.PREFIX}help - This menu\n`;
-        helpText += `• ${config.PREFIX}menu - Main menu\n`;
-        helpText += `• ${config.PREFIX}ping - Check status\n`;
-        helpText += `• ${config.PREFIX}owner - Owner info\n`;
-        helpText += `• ${config.PREFIX}plugins - List plugins\n`;
-        helpText += `• ${config.PREFIX}stats - Bot statistics\n`;
+        let helpText = '*Silva MD Help Menu*\\n\\n';
+        helpText += 'Prefix: ' + config.PREFIX + '\\n';
+        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\\n\\n';
+        helpText += '*Built-in Commands:*\\n';
+        helpText += '• ' + config.PREFIX + 'help - This menu\\n';
+        helpText += '• ' + config.PREFIX + 'menu - Main menu\\n';
+        helpText += '• ' + config.PREFIX + 'ping - Check status\\n';
+        helpText += '• ' + config.PREFIX + 'owner - Owner info\\n';
+        helpText += '• ' + config.PREFIX + 'plugins - List plugins\\n';
+        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\\n';
         
         if (plugins.length > 0) {
-            helpText += `\n*Loaded Plugins:*\n`;
+            helpText += '\\n*Loaded Plugins:*\\n';
             for (const cmd of plugins) {
-                helpText += `• ${config.PREFIX}${cmd.command} - ${cmd.help}\n`;
+                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\\n';
             }
         }
         
-        helpText += `\n📍 *Silva Tech Nexus*`;
+        helpText += '\\n📍 *Silva Tech Nexus*';
         
         await sock.sendMessage(jid, { text: helpText }, { quoted: message });
     }
 
     async menuCommand(context) {
         const { jid, sock, message } = context;
-        const menuText = `┌─「 *${config.BOT_NAME}* 」─
-│
-│ ⚡ *BOT STATUS*
-│ • Mode: ${config.BOT_MODE || 'public'}
-│ • Prefix: ${config.PREFIX}
-│ • Version: ${config.VERSION}
-│
-│ 📋 *CORE COMMANDS*
-│ • ${config.PREFIX}ping - Check bot status
-│ • ${config.PREFIX}help - Show help
-│ • ${config.PREFIX}owner - Show owner info
-│ • ${config.PREFIX}menu - This menu
-│ • ${config.PREFIX}plugins - List plugins
-│ • ${config.PREFIX}stats - Bot statistics
-│
-│ 🎨 *MEDIA COMMANDS*
-│ • ${config.PREFIX}sticker - Create sticker
-│
-│ └─「 *SILVA TECH* 」`;
+        const menuText = '┌─「 *Silva MD* 」─\\n' +
+                        '│\\n' +
+                        '│ ⚡ *BOT STATUS*\\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\\n' +
+                        '│ • Version: ' + config.VERSION + '\\n' +
+                        '│\\n' +
+                        '│ 📋 *CORE COMMANDS*\\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
+                        '│\\n' +
+                        '│ 🎨 *MEDIA COMMANDS*\\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
+                        '│\\n' +
+                        '│ └─「 *SILVA TECH* 」';
         
         await sock.sendMessage(jid, { text: menuText }, { quoted: message });
     }
@@ -758,7 +765,7 @@ class SilvaBot {
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: `*Status Report*\n\n⚡ Latency: ${latency}ms\n📊 Uptime: ${(process.uptime() / 3600).toFixed(2)}h\n💾 RAM: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB\n🌐 Connection: ${this.isConnected ? 'Connected ✅' : 'Disconnected ❌'}`
+            text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
         }, { quoted: message });
     }
 
@@ -766,20 +773,20 @@ class SilvaBot {
         const { jid, sock, message } = context;
         if (config.OWNER_NUMBER) {
             await sock.sendMessage(jid, {
-                text: `👑 *Bot Owner*\n\n📞 ${config.OWNER_NUMBER}\n🤖 ${config.BOT_NAME}\n⚡ v${config.VERSION}`
+                text: '👑 *Bot Owner*\\n\\n📞 ' + config.OWNER_NUMBER + '\\n🤖 ' + config.BOT_NAME + '\\n⚡ v' + config.VERSION
             }, { quoted: message });
         }
     }
 
     async statsCommand(context) {
         const { jid, sock, message } = context;
-        const statsText = `📊 *Bot Statistics*\n\n` +
-                         `⏱️ Uptime: ${(process.uptime() / 3600).toFixed(2)}h\n` +
-                         `💾 Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB\n` +
-                         `📦 Platform: ${process.platform}\n` +
-                         `🔌 Plugins: ${this.pluginManager.getCommandList().length}\n` +
-                         `🌐 Status: ${this.isConnected ? 'Connected ✅' : 'Disconnected ❌'}\n` +
-                         `🤖 Bot: ${config.BOT_NAME} v${config.VERSION}`;
+        const statsText = '📊 *Bot Statistics*\\n\\n' +
+                         '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
+                         '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n' +
+                         '📦 Platform: ' + process.platform + '\\n' +
+                         '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\n' +
+                         '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
+                         '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION;
         
         await sock.sendMessage(jid, { text: statsText }, { quoted: message });
     }
@@ -787,13 +794,13 @@ class SilvaBot {
     async pluginsCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
-        let pluginsText = `📦 *Loaded Plugins*\n\nTotal: ${plugins.length}\n\n`;
+        let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
         
         if (plugins.length === 0) {
-            pluginsText += `No plugins loaded.\nCheck silvaxlab folder.`;
+            pluginsText += 'No plugins loaded.\\nCheck silvaxlab folder.';
         } else {
             for (const plugin of plugins) {
-                pluginsText += `• ${config.PREFIX}${plugin.command} - ${plugin.help}\n`;
+                pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\n';
             }
         }
         
@@ -803,7 +810,7 @@ class SilvaBot {
     async startCommand(context) {
         const { jid, sock, message } = context;
         await sock.sendMessage(jid, { 
-            text: `✨ *Welcome to ${config.BOT_NAME}!*\n\nI'm an advanced WhatsApp bot with plugin support.\n\nType ${config.PREFIX}help for commands` 
+            text: '✨ *Welcome to Silva MD!*\\n\\nI\\'m an advanced WhatsApp bot with plugin support.\\n\\nType ' + config.PREFIX + 'help for commands' 
         }, { quoted: message });
     }
 
@@ -814,7 +821,7 @@ class SilvaBot {
             }
             return null;
         } catch (error) {
-            botLogger.log('ERROR', `Send error: ${error.message}`);
+            botLogger.log('ERROR', "Send error: " + error.message);
             return null;
         }
     }
