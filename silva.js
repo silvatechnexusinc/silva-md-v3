@@ -8,7 +8,8 @@ const {
     Browsers,
     makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
-    proto
+    proto,
+    delay
 } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
@@ -32,10 +33,25 @@ const globalContextInfo = {
     }
 };
 
-// SIMPLE LOGGER FOR PRODUCTION - NO PINO DEPENDENCY
-class Logger {
-    constructor() {
-        this.colors = {
+// FIXED LOGGER - Proper Pino logger for Baileys
+const { default: makeWASocketLogger } = require('pino');
+const logger = makeWASocketLogger({
+    level: config.DEBUG_MODE ? 'trace' : 'error',
+    transport: {
+        target: 'pino-pretty',
+        options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname'
+        }
+    }
+});
+
+// Custom logger for our bot (separate from Baileys logger)
+class BotLogger {
+    log(type, message) {
+        const timestamp = new Date().toISOString();
+        const colors = {
             SUCCESS: '\x1b[32m',
             ERROR: '\x1b[31m',
             INFO: '\x1b[36m',
@@ -43,28 +59,11 @@ class Logger {
             BOT: '\x1b[35m',
             RESET: '\x1b[0m'
         };
-    }
-    
-    log(type, message) {
-        const timestamp = new Date().toISOString();
-        const color = this.colors[type] || this.colors.INFO;
-        console.log(`${color}[${type}] ${timestamp} - ${message}${this.colors.RESET}`);
-        
-        // Also write to file in production
-        if (process.env.NODE_ENV === 'production') {
-            const logFile = `./logs/${new Date().toISOString().split('T')[0]}.log`;
-            const logDir = path.dirname(logFile);
-            
-            if (!fs.existsSync(logDir)) {
-                fs.mkdirSync(logDir, { recursive: true });
-            }
-            
-            fs.appendFileSync(logFile, `[${type}] ${timestamp} - ${message}\n`);
-        }
+        console.log(`${colors[type] || colors.INFO}[${type}] ${timestamp} - ${message}${colors.RESET}`);
     }
 }
 
-const logger = new Logger();
+const botLogger = new BotLogger();
 
 // Load Session from Compressed Base64
 async function loadSession() {
@@ -79,7 +78,7 @@ async function loadSession() {
         // Remove old session file if exists
         if (fs.existsSync(credsPath)) {
             fs.unlinkSync(credsPath);
-            logger.log('INFO', "♻️ ᴏʟᴅ ꜱᴇꜱꜱɪᴏɴ ʀᴇᴍᴏᴠᴇᴅ");
+            botLogger.log('INFO', "♻️ ᴏʟᴅ ꜱᴇꜱꜱɪᴏɴ ʀᴇᴍᴏᴠᴇᴅ");
         }
 
         if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
@@ -101,13 +100,13 @@ async function loadSession() {
 
         // Write the decompressed session data
         fs.writeFileSync(credsPath, decompressedData, "utf8");
-        logger.log('SUCCESS', "✅ ɴᴇᴡ ꜱᴇꜱꜱɪᴏɴ ʟᴏᴀᴅᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ");
+        botLogger.log('SUCCESS', "✅ ɴᴇᴡ ꜱᴇꜱꜱɪᴏɴ ʟᴏᴀᴅᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ");
 
         return true;
     } catch (e) {
-        logger.log('ERROR', `Session Error: ${e.message}`);
+        botLogger.log('ERROR', `Session Error: ${e.message}`);
         if (config.SESSION_ID) {
-            logger.log('WARNING', "Falling back to QR code authentication");
+            botLogger.log('WARNING', "Falling back to QR code authentication");
         }
         return false;
     }
@@ -139,7 +138,15 @@ class Functions {
 
     // Check if user is owner
     isOwner(sender) {
-        return sender === config.OWNER_NUMBER;
+        if (!config.OWNER_NUMBER) return false;
+        
+        // Format the owner number properly
+        let ownerJid = config.OWNER_NUMBER;
+        if (!ownerJid.includes('@s.whatsapp.net')) {
+            ownerJid = ownerJid.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+        }
+        
+        return sender === ownerJid;
     }
 
     // Format bytes to readable size
@@ -150,6 +157,14 @@ class Functions {
         const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    // Format phone number to JID
+    formatJid(number) {
+        if (!number) return null;
+        const cleaned = number.replace(/[^0-9]/g, '');
+        if (cleaned.length < 10) return null;
+        return cleaned + '@s.whatsapp.net';
     }
 
     // Sleep function
@@ -198,9 +213,9 @@ class PluginManager {
             
             if (!fs.existsSync(pluginDir)) {
                 fs.mkdirSync(pluginDir, { recursive: true });
-                logger.log('INFO', `Created plugin directory: ${dir}`);
+                botLogger.log('INFO', `Created plugin directory: ${dir}`);
                 
-                // Create example plugins
+                // Create example plugins with handler format
                 this.createExamplePlugins(pluginDir);
                 return;
             }
@@ -208,51 +223,73 @@ class PluginManager {
             const pluginFiles = fs.readdirSync(pluginDir)
                 .filter(file => file.endsWith('.js') && !file.startsWith('_'));
 
-            logger.log('INFO', `Found ${pluginFiles.length} plugin(s)`);
+            botLogger.log('INFO', `Found ${pluginFiles.length} plugin(s)`);
 
             for (const file of pluginFiles) {
                 try {
                     const pluginPath = path.join(pluginDir, file);
                     delete require.cache[require.resolve(pluginPath)];
                     
-                    const plugin = require(pluginPath);
+                    const pluginModule = require(pluginPath);
                     const pluginName = file.replace('.js', '');
                     
-                    // Support both old and new plugin formats
-                    if (plugin.handler) {
-                        // New handler-based plugin
-                        if (plugin.handler.command) {
-                            this.commandHandlers.set(plugin.handler.command, plugin.handler);
-                            
-                            // Store plugin info
-                            this.pluginInfo.set(plugin.handler.command.source, {
-                                help: plugin.handler.help || [],
-                                tags: plugin.handler.tags || [],
-                                group: plugin.handler.group !== undefined ? plugin.handler.group : false,
-                                admin: plugin.handler.admin || false,
-                                botAdmin: plugin.handler.botAdmin || false,
-                                owner: plugin.handler.owner || false,
-                                filename: file
-                            });
-                            
-                            logger.log('SUCCESS', `✅ Loaded plugin: ${pluginName} (${plugin.handler.command.source})`);
-                        } else if (typeof plugin === 'function') {
-                            // Old-style function plugin
-                            this.plugins.set(pluginName, plugin);
-                            logger.log('INFO', `📦 Loaded legacy plugin: ${pluginName}`);
-                        }
-                    } else if (typeof plugin === 'function') {
-                        // Old-style function plugin
-                        this.plugins.set(pluginName, plugin);
-                        logger.log('INFO', `📦 Loaded legacy plugin: ${pluginName}`);
+                    // Check if plugin exports a handler object
+                    if (pluginModule.handler && pluginModule.handler.command) {
+                        // Handler-based plugin
+                        this.commandHandlers.set(pluginModule.handler.command, pluginModule.handler);
+                        
+                        // Store plugin info
+                        this.pluginInfo.set(pluginModule.handler.command.source, {
+                            help: pluginModule.handler.help || [],
+                            tags: pluginModule.handler.tags || [],
+                            group: pluginModule.handler.group !== undefined ? pluginModule.handler.group : false,
+                            admin: pluginModule.handler.admin || false,
+                            botAdmin: pluginModule.handler.botAdmin || false,
+                            owner: pluginModule.handler.owner || false,
+                            filename: file
+                        });
+                        
+                        botLogger.log('SUCCESS', `✅ Loaded plugin: ${pluginName} (${pluginModule.handler.command.source})`);
+                    } else if (typeof pluginModule === 'function') {
+                        // Old-style function plugin (convert to handler)
+                        this.convertLegacyPlugin(pluginName, pluginModule, file);
+                    } else {
+                        botLogger.log('WARNING', `Plugin ${file} doesn't export a handler or function`);
                     }
                 } catch (error) {
-                    logger.log('ERROR', `Failed to load plugin ${file}: ${error.message}`);
+                    botLogger.log('ERROR', `Failed to load plugin ${file}: ${error.message}`);
                 }
             }
         } catch (error) {
-            logger.log('ERROR', `Plugin loading error: ${error.message}`);
+            botLogger.log('ERROR', `Plugin loading error: ${error.message}`);
         }
+    }
+
+    convertLegacyPlugin(name, pluginFunc, filename) {
+        // Convert old plugin to handler format
+        const handler = {
+            help: [name],
+            tags: ['legacy'],
+            command: new RegExp(`^${name}$`, 'i'),
+            group: false,
+            admin: false,
+            botAdmin: false,
+            owner: false,
+            code: pluginFunc
+        };
+        
+        this.commandHandlers.set(handler.command, handler);
+        this.pluginInfo.set(handler.command.source, {
+            help: handler.help,
+            tags: handler.tags,
+            group: handler.group,
+            admin: handler.admin,
+            botAdmin: handler.botAdmin,
+            owner: handler.owner,
+            filename: filename
+        });
+        
+        botLogger.log('INFO', `📦 Converted legacy plugin: ${name}`);
     }
 
     createExamplePlugins(pluginDir) {
@@ -352,7 +389,7 @@ handler.code = async ({ jid, sock, args, message }) => {
 
         for (const [filename, content] of Object.entries(examplePlugins)) {
             fs.writeFileSync(path.join(pluginDir, filename), content.trim());
-            logger.log('INFO', `Created example plugin: ${filename}`);
+            botLogger.log('INFO', `Created example plugin: ${filename}`);
         }
     }
 
@@ -366,14 +403,14 @@ handler.code = async ({ jid, sock, args, message }) => {
                     // Check command restrictions
                     if (handler.owner && !this.functions.isOwner(sender)) {
                         await sock.sendMessage(jid, { 
-                            text: config.MESSAGES.ownerOnly 
+                            text: '⚠️ This command is only for the bot owner.' 
                         }, { quoted: message });
                         return true;
                     }
                     
                     if (handler.group && !isGroup) {
                         await sock.sendMessage(jid, { 
-                            text: config.MESSAGES.groupOnly 
+                            text: '⚠️ This command only works in groups.' 
                         }, { quoted: message });
                         return true;
                     }
@@ -382,7 +419,7 @@ handler.code = async ({ jid, sock, args, message }) => {
                         const isAdmin = await this.functions.isAdmin(message, sock);
                         if (!isAdmin) {
                             await sock.sendMessage(jid, { 
-                                text: config.MESSAGES.adminOnly 
+                                text: '⚠️ This command requires admin privileges.' 
                             }, { quoted: message });
                             return true;
                         }
@@ -406,24 +443,12 @@ handler.code = async ({ jid, sock, args, message }) => {
                     return true;
                     
                 } catch (error) {
-                    logger.log('ERROR', `Command execution error: ${error.message}`);
+                    botLogger.log('ERROR', `Command execution error: ${error.message}`);
                     await sock.sendMessage(jid, { 
                         text: `❌ Command error: ${error.message}` 
                     }, { quoted: message });
                     return true;
                 }
-            }
-        }
-        
-        // Check old-style plugins
-        const command = text.split(' ')[0];
-        if (this.plugins.has(command)) {
-            try {
-                await this.plugins.get(command)(context);
-                return true;
-            } catch (error) {
-                logger.log('ERROR', `Legacy plugin error: ${error.message}`);
-                return false;
             }
         }
         
@@ -474,7 +499,7 @@ class SilvaBot {
 
     async init() {
         try {
-            logger.log('BOT', `🚀 Starting ${config.BOT_NAME} v${config.VERSION}`);
+            botLogger.log('BOT', `🚀 Starting ${config.BOT_NAME} v${config.VERSION}`);
             
             // Try to load session from compressed base64
             if (config.SESSION_ID) {
@@ -487,7 +512,7 @@ class SilvaBot {
             // Start connection
             await this.connect();
         } catch (error) {
-            logger.log('ERROR', `Initialization failed: ${error.message}`);
+            botLogger.log('ERROR', `Initialization failed: ${error.message}`);
             process.exit(1);
         }
     }
@@ -496,18 +521,14 @@ class SilvaBot {
         try {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             
-            const { version } = await fetchLatestBaileysVersion();
+            const { version, isLatest } = await fetchLatestBaileysVersion();
             
             this.sock = makeWASocket({
                 version,
-                printQRInTerminal: true,
+                logger,
                 auth: {
                     creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, {
-                        info: (msg) => logger.log('INFO', msg),
-                        error: (msg) => logger.log('ERROR', msg),
-                        warn: (msg) => logger.log('WARNING', msg)
-                    })
+                    keys: makeCacheableSignalKeyStore(state.keys, logger)
                 },
                 browser: Browsers.macOS(config.BOT_NAME),
                 markOnlineOnConnect: false,
@@ -523,9 +544,9 @@ class SilvaBot {
             // Set up event handlers
             this.setupEvents(saveCreds);
             
-            logger.log('SUCCESS', '✅ Bot initialized successfully');
+            botLogger.log('SUCCESS', '✅ Bot initialized successfully');
         } catch (error) {
-            logger.log('ERROR', `Connection error: ${error.message}`);
+            botLogger.log('ERROR', `Connection error: ${error.message}`);
             setTimeout(() => this.connect(), 5000);
         }
     }
@@ -533,32 +554,44 @@ class SilvaBot {
     setupEvents(saveCreds) {
         const sock = this.sock;
 
-        // Connection update
-        sock.ev.on('connection.update', (update) => {
+        // Connection update - MANUAL QR CODE HANDLING
+        sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
             
             if (qr) {
                 this.qrCode = qr;
+                botLogger.log('INFO', '📱 QR Code Generated:');
                 qrcode.generate(qr, { small: true });
-                logger.log('INFO', '📱 Scan QR code above with WhatsApp');
+                
+                // Also log QR as text for Heroku logs
+                const qrText = `QR Code for session: ${qr}`;
+                botLogger.log('INFO', qrText);
             }
 
             if (connection === 'close') {
                 const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-                logger.log('WARNING', `Connection closed. Reconnecting: ${shouldReconnect}`);
+                botLogger.log('WARNING', `Connection closed. Reconnecting: ${shouldReconnect}`);
                 
                 if (shouldReconnect) {
                     setTimeout(() => this.connect(), 5000);
                 }
             } else if (connection === 'open') {
                 this.isConnected = true;
-                logger.log('SUCCESS', '🔗 Connected to WhatsApp');
+                botLogger.log('SUCCESS', '🔗 Connected to WhatsApp');
                 
-                // Send connected message to owner
+                // Send connected message to owner if configured
                 if (config.OWNER_NUMBER) {
-                    this.sendMessage(config.OWNER_NUMBER, {
-                        text: `✅ *${config.BOT_NAME} Connected!*\n\n• Time: ${new Date().toLocaleString()}\n• Platform: ${process.platform}\n• Node: ${process.version}\n• Plugins: ${this.pluginManager.getCommandList().length}`
-                    });
+                    try {
+                        const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
+                        if (ownerJid) {
+                            await delay(2000); // Wait a bit before sending
+                            await this.sendMessage(ownerJid, {
+                                text: `✅ *${config.BOT_NAME} Connected!*\n\n• Time: ${new Date().toLocaleString()}\n• Platform: ${process.platform}\n• Node: ${process.version}\n• Plugins: ${this.pluginManager.getCommandList().length}`
+                            });
+                        }
+                    } catch (error) {
+                        botLogger.log('ERROR', `Failed to send owner message: ${error.message}`);
+                    }
                 }
             }
         });
@@ -583,16 +616,24 @@ class SilvaBot {
         // Group updates
         sock.ev.on('groups.update', async (updates) => {
             for (const update of updates) {
-                const metadata = await sock.groupMetadata(update.id);
-                this.groupCache.set(update.id, metadata);
+                try {
+                    const metadata = await sock.groupMetadata(update.id);
+                    this.groupCache.set(update.id, metadata);
+                } catch (error) {
+                    botLogger.log('ERROR', `Group update error: ${error.message}`);
+                }
             }
         });
 
         // Group participants update
         sock.ev.on('group-participants.update', async (event) => {
-            const metadata = await sock.groupMetadata(event.id);
-            this.groupCache.set(event.id, metadata);
-            await this.handleGroupParticipantsUpdate(event);
+            try {
+                const metadata = await sock.groupMetadata(event.id);
+                this.groupCache.set(event.id, metadata);
+                await this.handleGroupParticipantsUpdate(event);
+            } catch (error) {
+                botLogger.log('ERROR', `Group participants update error: ${error.message}`);
+            }
         });
 
         // Presence update
@@ -611,6 +652,13 @@ class SilvaBot {
         sock.ev.on('chats.upsert', (chats) => {
             for (const chat of chats) {
                 this.store.setChat(chat.id, chat);
+            }
+        });
+
+        // Handle errors
+        sock.ev.on('connection.update', ({ isOnline }) => {
+            if (isOnline === false) {
+                botLogger.log('WARNING', 'Bot is offline');
             }
         });
     }
@@ -689,7 +737,7 @@ class SilvaBot {
                                 message,
                                 sock: this.sock
                             });
-                        } else if (config.AUTO_REPLY && isGroup) {
+                        } else if (config.AUTO_REPLY) {
                             // Optional: Auto reply for unknown commands
                             await this.sock.sendMessage(jid, {
                                 text: `❓ Unknown command. Type ${config.PREFIX}help for available commands.`
@@ -706,7 +754,7 @@ class SilvaBot {
                 }
 
             } catch (error) {
-                logger.log('ERROR', `Message handling error: ${error.message}`);
+                botLogger.log('ERROR', `Message handling error: ${error.message}`);
             }
         }
     }
@@ -715,11 +763,11 @@ class SilvaBot {
         try {
             const pollCreation = await this.store.getMessage(update.key);
             if (pollCreation) {
-                logger.log('INFO', 'Poll update received');
+                botLogger.log('INFO', 'Poll update received');
                 // Handle poll updates here
             }
         } catch (error) {
-            logger.log('ERROR', `Poll update error: ${error.message}`);
+            botLogger.log('ERROR', `Poll update error: ${error.message}`);
         }
     }
 
@@ -827,9 +875,16 @@ class SilvaBot {
         const { jid, sock, message } = context;
         
         if (config.OWNER_NUMBER) {
-            await sock.sendMessage(jid, {
-                text: `👑 *Bot Owner*\n\n📞 *Contact:* ${config.OWNER_NUMBER.split('@')[0]}\n🤖 *Bot:* ${config.BOT_NAME}\n⚡ *Version:* ${config.VERSION}\n📚 *GitHub:* ${config.GITHUB}\n\nFor issues or suggestions, contact the owner directly.`
-            }, { quoted: message });
+            const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
+            if (ownerJid) {
+                await sock.sendMessage(jid, {
+                    text: `👑 *Bot Owner*\n\n📞 *Contact:* ${ownerJid.split('@')[0]}\n🤖 *Bot:* ${config.BOT_NAME}\n⚡ *Version:* ${config.VERSION}\n📚 *GitHub:* ${config.GITHUB}\n\nFor issues or suggestions, contact the owner directly.`
+                }, { quoted: message });
+            } else {
+                await sock.sendMessage(jid, {
+                    text: 'Owner number format is invalid. Please check your configuration.'
+                }, { quoted: message });
+            }
         } else {
             await sock.sendMessage(jid, {
                 text: 'Owner number not configured. Please set OWNER_NUMBER in environment variables.'
@@ -913,7 +968,7 @@ class SilvaBot {
             
             return await this.sock.sendMessage(jid, content, messageOptions);
         } catch (error) {
-            logger.log('ERROR', `Send message error: ${error.message}`);
+            botLogger.log('ERROR', `Send message error: ${error.message}`);
             return null;
         }
     }
@@ -929,7 +984,7 @@ class SilvaBot {
                 }
             );
         } catch (error) {
-            logger.log('ERROR', `Download media error: ${error.message}`);
+            botLogger.log('ERROR', `Download media error: ${error.message}`);
             return null;
         }
     }
@@ -943,7 +998,7 @@ module.exports = {
     SilvaBot,
     bot,
     config,
-    logger,
+    logger: botLogger,
     functions: new Functions()
 };
 
