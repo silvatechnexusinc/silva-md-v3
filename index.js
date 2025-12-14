@@ -21,7 +21,13 @@ console.log(`
 
 // Start the bot
 const { bot } = require('./silva.js');
-bot.init();
+if (bot && typeof bot.init === 'function') {
+    console.log('🚀 Starting Silva MD Bot...');
+    bot.init();
+} else {
+    console.error('❌ Bot initialization failed - check silva.js exports');
+    process.exit(1);
+}
 
 // Keep alive server for Heroku
 const http = require('http');
@@ -31,11 +37,21 @@ const server = http.createServer((req, res) => {
         status: 'online',
         bot: 'Silva MD',
         version: '3.0.0',
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
     }));
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🌐 Server running on port ${PORT}`);
+    console.log(`🌐 Health check server running on port ${PORT}`);
+});
+
+// Handle Heroku SIGTERM gracefully
+process.on('SIGTERM', () => {
+    console.log('🛑 Received SIGTERM, shutting down gracefully');
+    server.close(() => {
+        console.log('✅ HTTP server closed');
+        process.exit(0);
+    });
 });
