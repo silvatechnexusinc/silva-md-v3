@@ -501,15 +501,18 @@ class SilvaBot {
                 syncFullHistory: false,
                 defaultQueryTimeoutMs: 60000,
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
-                getMessage: async (key) => await this.store.getMessage(key),
                 retryRequestDelayMs: 3000,
                 connectTimeoutMs: 60000, // Increased for Heroku
                 keepAliveIntervalMs: 25000,
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
-                // FIX: Add these to ignore status and reduce decryption errors
+                // FIXED: shouldIgnoreJid with proper null check
                 shouldIgnoreJid: (jid) => {
+                    // Check if jid is defined and is a string
+                    if (!jid || typeof jid !== 'string') {
+                        return false;
+                    }
                     // Ignore status broadcasts and newsletter
                     return jid === 'status@broadcast' || jid.includes('@newsletter');
                 },
@@ -952,3 +955,13 @@ module.exports = {
     logger: botLogger,
     functions: new Functions()
 };
+
+// Add global error handlers at the end
+process.on('uncaughtException', (error) => {
+    botLogger.log('ERROR', `Uncaught Exception: ${error.message}`);
+    botLogger.log('ERROR', `Stack: ${error.stack}`);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    botLogger.log('ERROR', `Unhandled Rejection at: ${promise}, reason: ${reason}`);
+});
