@@ -1,0 +1,59 @@
+{
+  "name": "Silva MD Bot",
+  "description": "Advanced WhatsApp Bot with Modern Features",
+  "repository": "https://github.com/SilvaTechB/silva-md-bot",
+  "logo": "https://raw.githubusercontent.com/silvatech/silva-md-bot/main/assets/logo.png",
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "silva",
+    "whatsapp-bot",
+    "automation"
+  ],
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest"
+    },
+    {
+      "url": "https://github.com/clhuang/heroku-buildpack-webp-binaries.git"
+    }
+  ],
+  "env": {
+    "SESSION_ID": {
+      "description": "Your WhatsApp session ID in format: Silva~base64_compressed_session",
+      "required": true
+    },
+    "PREFIX": {
+      "description": "Bot command prefix (default: .)",
+      "value": ".",
+      "required": false
+    },
+    "BOT_NAME": {
+      "description": "Your bot name",
+      "value": "Silva MD",
+      "required": false
+    },
+    "OWNER_NUMBER": {
+      "description": "Bot owner's WhatsApp number with country code",
+      "required": true
+    },
+    "OPENAI_API_KEY": {
+      "description": "OpenAI API key for AI features",
+      "required": false
+    },
+    "MONGODB_URI": {
+      "description": "MongoDB URI for database (optional)",
+      "required": false
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "free"
+    }
+  }
+}
