@@ -1,59 +1,32 @@
 require('dotenv').config();
-const config = require('./config.js');
-const { SilvaBot } = require('./silva.js');
 
-console.clear();
 console.log(`
 ╔═══════════════════════════════════════╗
 ║                                       ║
-║      ░██████╗██╗██╗░░░██╗██╗░░██╗    ║
-║      ██╔════╝██║██║░░░██║██║░░██║    ║
-║      ╚█████╗░██║██║░░░██║███████║    ║
-║      ░╚═══██╗██║██║░░░██║██╔══██║    ║
-║      ██████╔╝██║╚██████╔╝██║░░██║    ║
-║      ╚═════╝░╚═╝░╚═════╝░╚═╝░░╚═╝    ║
-║                                       ║
-║        ███╗░░░███╗██████╗░           ║
-║        ████╗░████║██╔══██╗           ║
-║        ██╔████╔██║██║░░██║           ║
-║        ██║╚██╔╝██║██║░░██║           ║
-║        ██║░╚═╝░██║██████╔╝           ║
-║        ╚═╝░░░░░╚═╝╚═════╝░           ║
-║                                       ║
-║     Advanced WhatsApp Bot v${config.VERSION}     ║
-║       by ${config.AUTHOR}        ║
+║         SILVA MD BOT v3.0             ║
+║        Advanced WhatsApp Bot          ║
+║        with Plugin System             ║
 ║                                       ║
 ╚═══════════════════════════════════════╝
 `);
 
 // Start the bot
-const bot = new SilvaBot();
+const { bot } = require('./silva.js');
 bot.init();
 
-// Keep alive for hosting platforms
+// Keep alive server
 const http = require('http');
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
         status: 'online',
-        bot: config.BOT_NAME,
-        version: config.VERSION,
-        uptime: process.uptime(),
-        platform: process.platform
+        bot: 'Silva MD',
+        version: '3.0.0',
+        uptime: process.uptime()
     }));
 });
 
-server.listen(config.PORT, config.HOST, () => {
-    console.log(`🌐 Server running on http://${config.HOST}:${config.PORT}`);
-});
-
-// Handle process termination
-process.on('SIGINT', () => {
-    console.log('\n🛑 Shutting down Silva MD Bot...');
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    console.log('\n🛑 Received SIGTERM. Shutting down...');
-    process.exit(0);
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`🌐 Server running on port ${PORT}`);
 });
