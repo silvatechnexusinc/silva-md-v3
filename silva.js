@@ -12,7 +12,6 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
-const P = require('pino');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -33,41 +32,54 @@ const globalContextInfo = {
     }
 };
 
-// Logger
-const logger = P({
-    level: config.DEBUG_MODE ? 'debug' : 'error',
-    transport: {
-        target: 'pino-pretty',
-        options: {
-            colorize: true,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname'
+// SIMPLE LOGGER FOR PRODUCTION - NO PINO DEPENDENCY
+class Logger {
+    constructor() {
+        this.colors = {
+            SUCCESS: '\x1b[32m',
+            ERROR: '\x1b[31m',
+            INFO: '\x1b[36m',
+            WARNING: '\x1b[33m',
+            BOT: '\x1b[35m',
+            RESET: '\x1b[0m'
+        };
+    }
+    
+    log(type, message) {
+        const timestamp = new Date().toISOString();
+        const color = this.colors[type] || this.colors.INFO;
+        console.log(`${color}[${type}] ${timestamp} - ${message}${this.colors.RESET}`);
+        
+        // Also write to file in production
+        if (process.env.NODE_ENV === 'production') {
+            const logFile = `./logs/${new Date().toISOString().split('T')[0]}.log`;
+            const logDir = path.dirname(logFile);
+            
+            if (!fs.existsSync(logDir)) {
+                fs.mkdirSync(logDir, { recursive: true });
+            }
+            
+            fs.appendFileSync(logFile, `[${type}] ${timestamp} - ${message}\n`);
         }
     }
-});
-
-function logMessage(type, message) {
-    const timestamp = new Date().toISOString();
-    const colors = {
-        SUCCESS: '\x1b[32m',
-        ERROR: '\x1b[31m',
-        INFO: '\x1b[36m',
-        WARNING: '\x1b[33m',
-        BOT: '\x1b[35m',
-        RESET: '\x1b[0m'
-    };
-    console.log(`${colors[type] || colors.INFO}[${type}] ${timestamp} - ${message}${colors.RESET}`);
 }
+
+const logger = new Logger();
 
 // Load Session from Compressed Base64
 async function loadSession() {
     try {
         const credsPath = './sessions/creds.json';
         
+        // Create sessions directory if it doesn't exist
+        if (!fs.existsSync('./sessions')) {
+            fs.mkdirSync('./sessions', { recursive: true });
+        }
+        
         // Remove old session file if exists
         if (fs.existsSync(credsPath)) {
             fs.unlinkSync(credsPath);
-            logMessage('INFO', "♻️ ᴏʟᴅ ꜱᴇꜱꜱɪᴏɴ ʀᴇᴍᴏᴠᴇᴅ");
+            logger.log('INFO', "♻️ ᴏʟᴅ ꜱᴇꜱꜱɪᴏɴ ʀᴇᴍᴏᴠᴇᴅ");
         }
 
         if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
@@ -89,13 +101,13 @@ async function loadSession() {
 
         // Write the decompressed session data
         fs.writeFileSync(credsPath, decompressedData, "utf8");
-        logMessage('SUCCESS', "✅ ɴᴇᴡ ꜱᴇꜱꜱɪᴏɴ ʟᴏᴀᴅᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ");
+        logger.log('SUCCESS', "✅ ɴᴇᴡ ꜱᴇꜱꜱɪᴏɴ ʟᴏᴀᴅᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ");
 
         return true;
     } catch (e) {
-        logMessage('ERROR', `Session Error: ${e.message}`);
+        logger.log('ERROR', `Session Error: ${e.message}`);
         if (config.SESSION_ID) {
-            logMessage('WARNING', "Falling back to QR code authentication");
+            logger.log('WARNING', "Falling back to QR code authentication");
         }
         return false;
     }
@@ -186,7 +198,7 @@ class PluginManager {
             
             if (!fs.existsSync(pluginDir)) {
                 fs.mkdirSync(pluginDir, { recursive: true });
-                logMessage('INFO', `Created plugin directory: ${dir}`);
+                logger.log('INFO', `Created plugin directory: ${dir}`);
                 
                 // Create example plugins
                 this.createExamplePlugins(pluginDir);
@@ -196,7 +208,7 @@ class PluginManager {
             const pluginFiles = fs.readdirSync(pluginDir)
                 .filter(file => file.endsWith('.js') && !file.startsWith('_'));
 
-            logMessage('INFO', `Found ${pluginFiles.length} plugin(s)`);
+            logger.log('INFO', `Found ${pluginFiles.length} plugin(s)`);
 
             for (const file of pluginFiles) {
                 try {
@@ -223,23 +235,23 @@ class PluginManager {
                                 filename: file
                             });
                             
-                            logMessage('SUCCESS', `✅ Loaded plugin: ${pluginName} (${plugin.handler.command.source})`);
+                            logger.log('SUCCESS', `✅ Loaded plugin: ${pluginName} (${plugin.handler.command.source})`);
                         } else if (typeof plugin === 'function') {
                             // Old-style function plugin
                             this.plugins.set(pluginName, plugin);
-                            logMessage('INFO', `📦 Loaded legacy plugin: ${pluginName}`);
+                            logger.log('INFO', `📦 Loaded legacy plugin: ${pluginName}`);
                         }
                     } else if (typeof plugin === 'function') {
                         // Old-style function plugin
                         this.plugins.set(pluginName, plugin);
-                        logMessage('INFO', `📦 Loaded legacy plugin: ${pluginName}`);
+                        logger.log('INFO', `📦 Loaded legacy plugin: ${pluginName}`);
                     }
                 } catch (error) {
-                    logMessage('ERROR', `Failed to load plugin ${file}: ${error.message}`);
+                    logger.log('ERROR', `Failed to load plugin ${file}: ${error.message}`);
                 }
             }
         } catch (error) {
-            logMessage('ERROR', `Plugin loading error: ${error.message}`);
+            logger.log('ERROR', `Plugin loading error: ${error.message}`);
         }
     }
 
@@ -340,7 +352,7 @@ handler.code = async ({ jid, sock, args, message }) => {
 
         for (const [filename, content] of Object.entries(examplePlugins)) {
             fs.writeFileSync(path.join(pluginDir, filename), content.trim());
-            logMessage('INFO', `Created example plugin: ${filename}`);
+            logger.log('INFO', `Created example plugin: ${filename}`);
         }
     }
 
@@ -394,7 +406,7 @@ handler.code = async ({ jid, sock, args, message }) => {
                     return true;
                     
                 } catch (error) {
-                    logMessage('ERROR', `Command execution error: ${error.message}`);
+                    logger.log('ERROR', `Command execution error: ${error.message}`);
                     await sock.sendMessage(jid, { 
                         text: `❌ Command error: ${error.message}` 
                     }, { quoted: message });
@@ -410,7 +422,7 @@ handler.code = async ({ jid, sock, args, message }) => {
                 await this.plugins.get(command)(context);
                 return true;
             } catch (error) {
-                logMessage('ERROR', `Legacy plugin error: ${error.message}`);
+                logger.log('ERROR', `Legacy plugin error: ${error.message}`);
                 return false;
             }
         }
@@ -462,7 +474,7 @@ class SilvaBot {
 
     async init() {
         try {
-            logMessage('BOT', `🚀 Starting ${config.BOT_NAME} v${config.VERSION}`);
+            logger.log('BOT', `🚀 Starting ${config.BOT_NAME} v${config.VERSION}`);
             
             // Try to load session from compressed base64
             if (config.SESSION_ID) {
@@ -475,7 +487,7 @@ class SilvaBot {
             // Start connection
             await this.connect();
         } catch (error) {
-            logMessage('ERROR', `Initialization failed: ${error.message}`);
+            logger.log('ERROR', `Initialization failed: ${error.message}`);
             process.exit(1);
         }
     }
@@ -488,11 +500,14 @@ class SilvaBot {
             
             this.sock = makeWASocket({
                 version,
-                logger,
                 printQRInTerminal: true,
                 auth: {
                     creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, logger)
+                    keys: makeCacheableSignalKeyStore(state.keys, {
+                        info: (msg) => logger.log('INFO', msg),
+                        error: (msg) => logger.log('ERROR', msg),
+                        warn: (msg) => logger.log('WARNING', msg)
+                    })
                 },
                 browser: Browsers.macOS(config.BOT_NAME),
                 markOnlineOnConnect: false,
@@ -508,9 +523,9 @@ class SilvaBot {
             // Set up event handlers
             this.setupEvents(saveCreds);
             
-            logMessage('SUCCESS', '✅ Bot initialized successfully');
+            logger.log('SUCCESS', '✅ Bot initialized successfully');
         } catch (error) {
-            logMessage('ERROR', `Connection error: ${error.message}`);
+            logger.log('ERROR', `Connection error: ${error.message}`);
             setTimeout(() => this.connect(), 5000);
         }
     }
@@ -525,19 +540,19 @@ class SilvaBot {
             if (qr) {
                 this.qrCode = qr;
                 qrcode.generate(qr, { small: true });
-                logMessage('INFO', '📱 Scan QR code above with WhatsApp');
+                logger.log('INFO', '📱 Scan QR code above with WhatsApp');
             }
 
             if (connection === 'close') {
                 const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-                logMessage('WARNING', `Connection closed. Reconnecting: ${shouldReconnect}`);
+                logger.log('WARNING', `Connection closed. Reconnecting: ${shouldReconnect}`);
                 
                 if (shouldReconnect) {
                     setTimeout(() => this.connect(), 5000);
                 }
             } else if (connection === 'open') {
                 this.isConnected = true;
-                logMessage('SUCCESS', '🔗 Connected to WhatsApp');
+                logger.log('SUCCESS', '🔗 Connected to WhatsApp');
                 
                 // Send connected message to owner
                 if (config.OWNER_NUMBER) {
@@ -691,7 +706,7 @@ class SilvaBot {
                 }
 
             } catch (error) {
-                logMessage('ERROR', `Message handling error: ${error.message}`);
+                logger.log('ERROR', `Message handling error: ${error.message}`);
             }
         }
     }
@@ -700,11 +715,11 @@ class SilvaBot {
         try {
             const pollCreation = await this.store.getMessage(update.key);
             if (pollCreation) {
-                logMessage('INFO', 'Poll update received');
+                logger.log('INFO', 'Poll update received');
                 // Handle poll updates here
             }
         } catch (error) {
-            logMessage('ERROR', `Poll update error: ${error.message}`);
+            logger.log('ERROR', `Poll update error: ${error.message}`);
         }
     }
 
@@ -898,7 +913,7 @@ class SilvaBot {
             
             return await this.sock.sendMessage(jid, content, messageOptions);
         } catch (error) {
-            logMessage('ERROR', `Send message error: ${error.message}`);
+            logger.log('ERROR', `Send message error: ${error.message}`);
             return null;
         }
     }
@@ -910,12 +925,11 @@ class SilvaBot {
                 type,
                 {},
                 {
-                    logger,
                     reuploadRequest: this.sock.updateMediaMessage
                 }
             );
         } catch (error) {
-            logMessage('ERROR', `Download media error: ${error.message}`);
+            logger.log('ERROR', `Download media error: ${error.message}`);
             return null;
         }
     }
@@ -929,12 +943,7 @@ module.exports = {
     SilvaBot,
     bot,
     config,
-    logger: {
-        info: (msg) => logMessage('INFO', msg),
-        error: (msg) => logMessage('ERROR', msg),
-        success: (msg) => logMessage('SUCCESS', msg),
-        warning: (msg) => logMessage('WARNING', msg)
-    },
+    logger,
     functions: new Functions()
 };
 
