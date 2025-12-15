@@ -583,19 +583,40 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
-                if (config.OWNER_NUMBER) {
-                    try {
-                        await delay(2000);
-                        const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
-                        if (ownerJid) {
-                            await this.sendMessage(ownerJid, {
-                                text: '✅ *' + config.BOT_NAME + ' Connected!*\\nMode: ' + (config.BOT_MODE || 'public') + '\\nTime: ' + new Date().toLocaleString()
-                            });
-                            botLogger.log('INFO', 'Sent connected message to owner');
-                        }
-                    } catch (error) {
-                        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
+               if (config.OWNER_NUMBER) {
+    try {
+        await delay(2000);
+
+        const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
+        if (ownerJid) {
+            const now = new Date().toLocaleString();
+
+            const messageText = `
+✅ *${config.BOT_NAME} Connected!*
+Mode: ${config.BOT_MODE || 'public'}
+Time: ${now}
+            `.trim(); // Proper line breaks
+
+            await this.sendMessage(ownerJid, {
+                text: messageText,
+                contextInfo: {
+                    mentionedJid: [ownerJid],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "SILVA MD BOT REPO💖",
+                        serverMessageId: 143
                     }
+                }
+            });
+
+            botLogger.log('INFO', 'Sent connected message to owner');
+        }
+    } catch (error) {
+        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
+    }
+}
                 }
             }
         });
