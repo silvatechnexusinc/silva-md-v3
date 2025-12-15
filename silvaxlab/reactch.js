@@ -6,7 +6,7 @@ const handler = {
     group: false,
     admin: false,
     botAdmin: false,
-    owner: true,
+    owner: false,
 
     execute: async ({ jid, sock, message, args, isOwner }) => {
         try {
