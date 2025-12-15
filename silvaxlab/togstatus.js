@@ -4,20 +4,30 @@ const { PassThrough } = require('stream')
 const baileys = require('@whiskeysockets/baileys')
 
 const handler = {
-    help: [
-        'togstatus [caption|color|group_url]',
-        'Reply to image / video / audio'
-    ],
+    help: ['togstatus [caption|color|group_url] - Reply to media'],
     tags: ['group', 'tools'],
     command: /^(togstatus|swgc|groupstatus)$/i,
     group: true,
-    admin: true,
-    botAdmin: true,
+    admin: false,       // Anyone can use
+    botAdmin: false,    // Doesn't require bot to be admin
     owner: false,
 
     execute: async ({ jid, sock, message, text }) => {
+        const sender = message.key.participant || message.key.remoteJid
         const reply = (txt) =>
-            sock.sendMessage(jid, { text: txt }, { quoted: message })
+            sock.sendMessage(jid, { 
+                text: txt, 
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "SILVA TOOLS💖",
+                        serverMessageId: 143
+                    }
+                }
+            }, { quoted: message })
 
         try {
             const from = message.key.remoteJid
@@ -45,15 +55,7 @@ const handler = {
             if (!quoted) {
                 if (!caption) {
                     return reply(
-                        `📝 *Group Status Usage*
-
-.togstatus caption|color
-.togstatus |blue
-Reply to image / video / audio
-
-🎨 Colors:
-blue, green, yellow, orange, red,
-purple, gray, black, white, cyan`
+                        `📝 *Group Status Usage*\n.togstatus caption|color\n.togstatus |blue\nReply to image / video / audio\n🎨 Colors: blue, green, yellow, orange, red, purple, gray, black, white, cyan`
                     )
                 }
 
@@ -72,7 +74,17 @@ purple, gray, black, white, cyan`
 
                 await groupStatus(sock, targetGroupId, {
                     text: caption,
-                    backgroundColor: colors[color?.toLowerCase()] || colors.blue
+                    backgroundColor: colors[color?.toLowerCase()] || colors.blue,
+                    contextInfo: {
+                        mentionedJid: [sender],
+                        forwardingScore: 999,
+                        isForwarded: true,
+                        forwardedNewsletterMessageInfo: {
+                            newsletterJid: "120363200367779016@newsletter",
+                            newsletterName: "SILVA TOOLS💖",
+                            serverMessageId: 143
+                        }
+                    }
                 })
 
                 return reply('✅ Text status sent')
@@ -89,7 +101,17 @@ purple, gray, black, white, cyan`
 
                 await groupStatus(sock, targetGroupId, {
                     image: buf,
-                    caption: caption || ''
+                    caption: caption || '',
+                    contextInfo: {
+                        mentionedJid: [sender],
+                        forwardingScore: 999,
+                        isForwarded: true,
+                        forwardedNewsletterMessageInfo: {
+                            newsletterJid: "120363200367779016@newsletter",
+                            newsletterName: "SILVA TOOLS💖",
+                            serverMessageId: 143
+                        }
+                    }
                 })
 
                 return reply('✅ Image status sent')
@@ -106,7 +128,17 @@ purple, gray, black, white, cyan`
 
                 await groupStatus(sock, targetGroupId, {
                     video: buf,
-                    caption: caption || ''
+                    caption: caption || '',
+                    contextInfo: {
+                        mentionedJid: [sender],
+                        forwardingScore: 999,
+                        isForwarded: true,
+                        forwardedNewsletterMessageInfo: {
+                            newsletterJid: "120363200367779016@newsletter",
+                            newsletterName: "SILVA TOOLS💖",
+                            serverMessageId: 143
+                        }
+                    }
                 })
 
                 return reply('✅ Video status sent')
@@ -128,7 +160,17 @@ purple, gray, black, white, cyan`
                     audio: vn,
                     mimetype: 'audio/ogg; codecs=opus',
                     ptt: true,
-                    waveform
+                    waveform,
+                    contextInfo: {
+                        mentionedJid: [sender],
+                        forwardingScore: 999,
+                        isForwarded: true,
+                        forwardedNewsletterMessageInfo: {
+                            newsletterJid: "120363200367779016@newsletter",
+                            newsletterName: "SILVA TOOLS💖",
+                            serverMessageId: 143
+                        }
+                    }
                 })
 
                 return reply('✅ Audio status sent')
@@ -144,12 +186,12 @@ purple, gray, black, white, cyan`
 
 module.exports = { handler }
 
-
 // ================= HELPERS =================
 
 async function groupStatus(conn, jid, content) {
-    const { backgroundColor } = content
+    const { backgroundColor, contextInfo } = content
     delete content.backgroundColor
+    delete content.contextInfo
 
     const inside = await baileys.generateWAMessageContent(content, {
         upload: conn.waUploadToServer,
@@ -161,11 +203,11 @@ async function groupStatus(conn, jid, content) {
     const msg = baileys.generateWAMessageFromContent(
         jid,
         {
-            messageContextInfo: { messageSecret: secret },
+            messageContextInfo: { messageSecret: secret, ...contextInfo },
             groupStatusMessageV2: {
                 message: {
                     ...inside,
-                    messageContextInfo: { messageSecret: secret }
+                    messageContextInfo: { messageSecret: secret, ...contextInfo }
                 }
             }
         },
