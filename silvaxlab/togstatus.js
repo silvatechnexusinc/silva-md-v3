@@ -12,7 +12,7 @@ const handler = {
     command: /^(togstatus|swgc|groupstatus)$/i,
     group: true,
     admin: false,   // any user can use
-    botAdmin: true,
+    botAdmin: false,
     owner: false,
 
     execute: async ({ jid, sock, message, text }) => {
