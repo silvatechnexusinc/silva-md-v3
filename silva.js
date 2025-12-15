@@ -1,3 +1,6 @@
+// ==============================
+// 📦 IMPORTS SECTION
+// ==============================
 const {
     makeWASocket,
     DisconnectReason,
@@ -32,9 +35,11 @@ const globalContextInfo = {
     }
 };
 
-// Proper pino logger with reduced verbosity
+// ==============================
+// 🪵 LOGGER SECTION
+// ==============================
 const logger = pino({
-    level: 'error', // Changed from 'warn' to 'error' to reduce noise
+    level: config.DEBUG_MODE ? 'debug' : 'error',
     transport: config.DEBUG_MODE ? {
         target: 'pino-pretty',
         options: {
@@ -63,7 +68,9 @@ class BotLogger {
 
 const botLogger = new BotLogger();
 
-// Load Session from Compressed Base64
+// ==============================
+// 🔐 SESSION MANAGEMENT
+// ==============================
 async function loadSession() {
     try {
         const credsPath = './sessions/creds.json';
@@ -72,13 +79,13 @@ async function loadSession() {
             fs.mkdirSync('./sessions', { recursive: true });
         }
         
-        // Clean old sessions
+        // Clean old sessions if needed
         if (fs.existsSync(credsPath)) {
             try {
                 fs.unlinkSync(credsPath);
                 botLogger.log('INFO', "♻️ Old session removed");
             } catch (e) {
-                // Ignore
+                // Ignore error
             }
         }
 
@@ -107,7 +114,9 @@ async function loadSession() {
     }
 }
 
-// Utility Functions
+// ==============================
+// 🔧 UTILITY FUNCTIONS
+// ==============================
 class Functions {
     constructor() {
         this.tempDir = path.join(__dirname, './temp');
@@ -136,21 +145,31 @@ class Functions {
         if (!ownerJid.includes('@s.whatsapp.net')) {
             ownerJid = ownerJid.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
         }
-        return sender === ownerJid;
+        
+        // Clean both jids for comparison
+        const cleanOwner = ownerJid.split(':')[0];
+        const cleanSender = sender.split(':')[0];
+        return cleanSender === cleanOwner;
     }
 
     isAllowed(sender, jid) {
+        // Owner is always allowed
         if (this.isOwner(sender)) return true;
+        
         if (config.BOT_MODE === 'public') return true;
         
         if (config.BOT_MODE === 'private') {
+            // Allow groups in private mode
             if (jid.endsWith('@g.us')) return true;
+            
+            // Check allowed users
             if (config.ALLOWED_USERS && Array.isArray(config.ALLOWED_USERS)) {
                 const senderNumber = sender.split('@')[0];
                 return config.ALLOWED_USERS.includes(senderNumber);
             }
             return false;
         }
+        
         return true;
     }
 
@@ -175,7 +194,9 @@ class Functions {
     }
 }
 
-// Store Implementation
+// ==============================
+// 💾 STORE IMPLEMENTATION
+// ==============================
 class MessageStore {
     constructor() {
         this.messages = new Map();
@@ -199,7 +220,9 @@ class MessageStore {
     }
 }
 
-// Plugin Manager
+// ==============================
+// 🧩 PLUGIN MANAGER
+// ==============================
 class PluginManager {
     constructor() {
         this.commandHandlers = new Map();
@@ -282,7 +305,6 @@ const handler = {
             
             await sock.sendMessage(jid, { text: '🎨 Creating sticker...' }, { quoted: message });
             
-            // Simulate sticker processing
             const { delay } = require('@whiskeysockets/baileys');
             await delay(1000);
             
@@ -373,6 +395,7 @@ module.exports = { handler };`;
     async executeCommand(context) {
         const { text, jid, sender, isGroup, message, sock, args } = context;
         
+        // FIXED: Check if user is allowed BEFORE command matching
         if (!this.functions.isAllowed(sender, jid)) {
             if (config.BOT_MODE === 'private') {
                 await sock.sendMessage(jid, { 
@@ -387,6 +410,7 @@ module.exports = { handler };`;
             const commandMatch = text.split(' ')[0];
             if (commandRegex.test(commandMatch)) {
                 try {
+                    // Check permissions
                     if (handler.owner && !this.functions.isOwner(sender)) {
                         await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
                         return true;
@@ -405,6 +429,21 @@ module.exports = { handler };`;
                         }
                     }
                     
+                    if (handler.botAdmin && isGroup) {
+                        try {
+                            const metadata = await sock.groupMetadata(jid);
+                            const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                            const botParticipant = metadata.participants.find(p => p.id === botJid);
+                            if (!botParticipant || !botParticipant.admin) {
+                                await sock.sendMessage(jid, { text: '⚠️ Bot needs admin rights' }, { quoted: message });
+                                return true;
+                            }
+                        } catch (e) {
+                            // Ignore error
+                        }
+                    }
+                    
+                    // Execute command
                     await handler.execute(context);
                     return true;
                     
@@ -435,7 +474,9 @@ module.exports = { handler };`;
     }
 }
 
-// Main Bot Class with FIXED message handling
+// ==============================
+// 🤖 MAIN BOT CLASS (FIXED)
+// ==============================
 class SilvaBot {
     constructor() {
         this.sock = null;
@@ -450,6 +491,7 @@ class SilvaBot {
         this.reconnectDelay = 5000;
         this.keepAliveInterval = null;
         
+        // Built-in commands
         this.commands = {
             help: this.helpCommand.bind(this),
             menu: this.menuCommand.bind(this),
@@ -492,7 +534,7 @@ class SilvaBot {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
-            // FIXED: Better connection settings
+            // FIXED: Connection settings
             this.sock = makeWASocket({
                 version,
                 logger: logger,
@@ -507,21 +549,23 @@ class SilvaBot {
                 defaultQueryTimeoutMs: 60000,
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
                 retryRequestDelayMs: 3000,
-                connectTimeoutMs: 60000, // Increased for Heroku
+                connectTimeoutMs: 60000,
                 keepAliveIntervalMs: 25000,
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
-                // FIXED: shouldIgnoreJid with proper null check
+                // FIXED: shouldIgnoreJid function
                 shouldIgnoreJid: (jid) => {
-                    // Check if jid is defined and is a string
                     if (!jid || typeof jid !== 'string') {
                         return false;
                     }
-                    // Ignore status broadcasts and newsletter
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                    // Fixed: Properly check for status and newsletter
+                    if (jid === 'status@broadcast' || jid.includes('@newsletter')) {
+                        return true;
+                    }
+                    return false;
                 },
-                // FIX: Better message handling
+                // Message retrieval
                 getMessage: async (key) => {
                     try {
                         return await this.store.getMessage(key);
@@ -529,8 +573,7 @@ class SilvaBot {
                         return null;
                     }
                 },
-                // FIX: Reduce logging
-                printQRInTerminal: false
+                printQRInTerminal: true // Keep QR visible
             });
 
             this.setupEvents(saveCreds);
@@ -566,8 +609,9 @@ class SilvaBot {
                 this.stopKeepAlive();
                 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const reason = lastDisconnect?.error?.message;
                 
-                botLogger.log('WARNING', "Connection closed. Status: " + statusCode);
+                botLogger.log('WARNING', "Connection closed. Status: " + statusCode + ", Reason: " + reason);
                 
                 if (statusCode === DisconnectReason.loggedOut) {
                     botLogger.log('ERROR', 'Logged out. Please scan QR again.');
@@ -583,40 +627,39 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
-               if (config.OWNER_NUMBER) {
-    try {
-        await delay(2000);
-
-        const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
-        if (ownerJid) {
-            const now = new Date().toLocaleString();
-
-            const messageText = `
+                // Send connection message to owner
+                if (config.OWNER_NUMBER) {
+                    try {
+                        await delay(2000);
+                        
+                        const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
+                        if (ownerJid) {
+                            const now = new Date().toLocaleString();
+                            const messageText = `
 ✅ *${config.BOT_NAME} Connected!*
 Mode: ${config.BOT_MODE || 'public'}
 Time: ${now}
-            `.trim(); // Proper line breaks
-
-            await this.sendMessage(ownerJid, {
-                text: messageText,
-                contextInfo: {
-                    mentionedJid: [ownerJid],
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "SILVA MD BOT REPO💖",
-                        serverMessageId: 143
+                            `.trim();
+                            
+                            await this.sendMessage(ownerJid, {
+                                text: messageText,
+                                contextInfo: {
+                                    mentionedJid: [ownerJid],
+                                    forwardingScore: 999,
+                                    isForwarded: true,
+                                    forwardedNewsletterMessageInfo: {
+                                        newsletterJid: "120363200367779016@newsletter",
+                                        newsletterName: "SILVA MD BOT REPO💖",
+                                        serverMessageId: 143
+                                    }
+                                }
+                            });
+                            
+                            botLogger.log('INFO', 'Sent connected message to owner');
+                        }
+                    } catch (error) {
+                        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
                     }
-                }
-            });
-
-            botLogger.log('INFO', 'Sent connected message to owner');
-        }
-    } catch (error) {
-        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
-    }
-}
                 }
             }
         });
@@ -631,15 +674,17 @@ Time: ${now}
             }
         });
 
-        // FIX: Listen to all message types
+        // Handle message updates
         sock.ev.on('messages.update', async (updates) => {
             for (const update of updates) {
+                // Handle message updates if needed
                 if (update.update) {
-                    botLogger.log('DEBUG', 'Message update received');
+                    // Message was updated (e.g., read receipt)
                 }
             }
         });
 
+        // Handle group participants updates
         sock.ev.on('group-participants.update', async (event) => {
             try {
                 if (this.sock.user && this.sock.user.id) {
@@ -656,9 +701,30 @@ Time: ${now}
             }
         });
 
-        // FIX: Listen to presence updates (optional)
+        // Handle presence updates
         sock.ev.on('presence.update', (update) => {
-            // Handle presence updates if needed
+            // Presence updates for typing indicators
+        });
+
+        // FIXED: Add status update listener
+        sock.ev.on('status.update', async (update) => {
+            try {
+                if (config.AUTO_STATUS_VIEW || config.AUTO_STATUS_LIKE) {
+                    const { jid, status } = update;
+                    
+                    // Auto view status
+                    if (config.AUTO_STATUS_VIEW) {
+                        await sock.readMessages([{ key: { remoteJid: jid, id: 'status' } }]);
+                    }
+                    
+                    // Auto like status (if implemented)
+                    if (config.AUTO_STATUS_LIKE) {
+                        // Status like functionality would go here
+                    }
+                }
+            } catch (error) {
+                botLogger.log('ERROR', 'Status update error: ' + error.message);
+            }
         });
     }
 
@@ -695,7 +761,7 @@ Time: ${now}
         }
     }
 
-    // FIXED: Better message handling
+    // FIXED: Message handling with typing indicators
     async handleMessages(m) {
         if (!m.messages || !Array.isArray(m.messages)) {
             return;
@@ -722,8 +788,8 @@ Time: ${now}
                 const sender = message.key.participant || jid;
                 const isGroup = jid.endsWith('@g.us');
                 
-                // Debug log for received messages
-                botLogger.log('DEBUG', 'Message received from: ' + sender + ' in: ' + jid);
+                // Send typing indicator
+                await this.sock.sendPresenceUpdate('composing', jid);
 
                 // Extract text from message
                 let text = '';
@@ -737,11 +803,9 @@ Time: ${now}
                     text = message.message.videoMessage.caption;
                 } else if (message.message?.documentMessage?.caption) {
                     text = message.message.documentMessage.caption;
-                }
-
-                // Log command attempts
-                if (text) {
-                    botLogger.log('INFO', 'Message text: ' + text.substring(0, 50));
+                } else if (message.message?.audioMessage) {
+                    // Handle audio messages
+                    text = message.message.audioMessage?.caption || '';
                 }
 
                 // Check if message starts with prefix
@@ -750,15 +814,8 @@ Time: ${now}
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
-                    // Check if user is allowed
-                    if (!this.functions.isAllowed(sender, jid)) {
-                        if (config.BOT_MODE === 'private') {
-                            await this.sock.sendMessage(jid, {
-                                text: '🔒 Private mode: Contact owner for access.'
-                            }, { quoted: message });
-                        }
-                        continue;
-                    }
+                    // Stop typing indicator
+                    await this.sock.sendPresenceUpdate('paused', jid);
                     
                     // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
@@ -796,15 +853,26 @@ Time: ${now}
                             }
                         }
                     }
+                } else {
+                    // Stop typing indicator for non-commands
+                    await this.sock.sendPresenceUpdate('paused', jid);
                 }
 
             } catch (error) {
-                botLogger.log('ERROR', "Message handling error: " + error.message + " - Stack: " + error.stack);
+                botLogger.log('ERROR', "Message handling error: " + error.message);
+                try {
+                    await this.sock.sendPresenceUpdate('paused', message.key.remoteJid);
+                } catch (e) {
+                    // Ignore
+                }
             }
         }
     }
 
-    // Command handlers with better error handling
+    // ==============================
+    // 💬 COMMAND HANDLERS
+    // ==============================
+    
     async helpCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
@@ -831,7 +899,6 @@ Time: ${now}
         
         try {
             await sock.sendMessage(jid, { text: helpText }, { quoted: message });
-            botLogger.log('INFO', 'Help command executed successfully');
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send help: ' + error.message);
         }
@@ -861,7 +928,6 @@ Time: ${now}
         
         try {
             await sock.sendMessage(jid, { text: menuText }, { quoted: message });
-            botLogger.log('INFO', 'Menu command executed successfully');
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send menu: ' + error.message);
         }
@@ -877,7 +943,6 @@ Time: ${now}
             await sock.sendMessage(jid, {
                 text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
             }, { quoted: message });
-            botLogger.log('INFO', 'Ping command executed successfully');
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send ping: ' + error.message);
         }
@@ -890,7 +955,6 @@ Time: ${now}
                 await sock.sendMessage(jid, {
                     text: '👑 *Bot Owner*\\n\\n📞 ' + config.OWNER_NUMBER + '\\n🤖 ' + config.BOT_NAME + '\\n⚡ v' + config.VERSION
                 }, { quoted: message });
-                botLogger.log('INFO', 'Owner command executed successfully');
             } catch (error) {
                 botLogger.log('ERROR', 'Failed to send owner info: ' + error.message);
             }
@@ -909,7 +973,6 @@ Time: ${now}
                              '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION;
             
             await sock.sendMessage(jid, { text: statsText }, { quoted: message });
-            botLogger.log('INFO', 'Stats command executed successfully');
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send stats: ' + error.message);
         }
@@ -930,7 +993,6 @@ Time: ${now}
             }
             
             await sock.sendMessage(jid, { text: pluginsText }, { quoted: message });
-            botLogger.log('INFO', 'Plugins command executed successfully');
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send plugins list: ' + error.message);
         }
@@ -948,7 +1010,6 @@ Time: ${now}
             await sock.sendMessage(jid, { 
                 text: startText
             }, { quoted: message });
-            botLogger.log('INFO', 'Start command executed successfully');
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send start message: ' + error.message);
         }
@@ -958,7 +1019,6 @@ Time: ${now}
         try {
             if (this.sock && this.isConnected) {
                 const result = await this.sock.sendMessage(jid, content, { ...globalContextInfo, ...options });
-                botLogger.log('DEBUG', 'Message sent to: ' + jid);
                 return result;
             } else {
                 botLogger.log('WARNING', 'Cannot send message: Bot not connected');
@@ -971,7 +1031,9 @@ Time: ${now}
     }
 }
 
-// Create bot instance
+// ==============================
+// 🚀 BOT INSTANCE CREATION
+// ==============================
 const bot = new SilvaBot();
 
 // Export bot instance for index.js
@@ -982,7 +1044,9 @@ module.exports = {
     functions: new Functions()
 };
 
-// Add global error handlers at the end
+// ==============================
+// 🛡️ ERROR HANDLERS
+// ==============================
 process.on('uncaughtException', (error) => {
     botLogger.log('ERROR', `Uncaught Exception: ${error.message}`);
     botLogger.log('ERROR', `Stack: ${error.stack}`);
