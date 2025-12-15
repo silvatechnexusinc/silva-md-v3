@@ -22,7 +22,7 @@
   "author": "Silva Tech Nexus",
   "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc.6",
+    "@whiskeysockets/baileys": "v7.0.0-rc.9",
     "@hapi/boom": "^10.0.1",
     "qrcode-terminal": "^0.12.0",
     "axios": "^1.6.2",
@@ -37,6 +37,7 @@
     "crypto": "^1.0.1",
     "jimp": "1.6.0",
     "link-preview-js": "^3.0.5",
+    "node-fetch": "^3.2.0",
     "pino": "^8.16.1",
     "pino-pretty": "^11.2.1",
     "lodash": "^4.17.21",
@@ -46,7 +47,11 @@
     "yt-search": "^2.10.4",
     "g-i-s": "^2.1.6",
     "translate-google": "^1.5.0",
-    "cowsay": "^1.5.0"
+    "cowsay": "^1.5.0",
+    "youtube-yts": "^2.0.0",
+    "youtubedl-core": "^4.11.7",
+    "yt-search": "^2.10.3",
+    "ytdl-core": "latest"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
