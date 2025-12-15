@@ -1,123 +1,149 @@
-const fetch = require('node-fetch')
 const fs = require('fs')
 
-const handler = {
-  help: ['lyrics <song name>'],
-  tags: ['music'],
-  command: /^(lyrics|lyric|lirik)$/i,
-  group: false,
-  admin: false,
-  botAdmin: false,
-  owner: false,
+// Native fetch (Node 18+)
+// DO NOT import node-fetch
 
-  execute: async ({ jid, sock, message, args }) => {
+module.exports = {
+  command: "lyrics",
+  alias: ["lyric", "lirik"],
+  react: "🎵",
+  desc: "Get song lyrics",
+  category: "music",
+
+  async execute(sock, msg, args) {
     try {
-      const query = args.join(' ')
-      if (!query) {
+      const text = args.join(" ").trim()
+      const jid = msg.key.remoteJid
+
+      if (!text) {
         return sock.sendMessage(
           jid,
           {
             text:
-              `🎵 *Lyrics Engine*\n\n` +
-              `Usage:\n.lyrics <song name>\n\n` +
-              `Example:\n.lyrics perfect ed sheeran`,
-            contextInfo: {
-              forwardingScore: 777,
-              isForwarded: true,
-              forwardedNewsletterMessageInfo: {
-                newsletterJid: '120363200367779016@newsletter',
-                newsletterName: 'SILVA MUSIC',
-                serverMessageId: 55
-              }
-            }
+`🎶 *Lyrics Finder*
+
+Usage:
+.lyrics <song name>
+
+Example:
+.lyrics perfect ed sheeran`
           },
-          { quoted: message }
+          { quoted: msg }
         )
       }
 
-      const api = `https://api.zenzxz.my.id/api/tools/lirik?title=${encodeURIComponent(query)}`
-      const res = await fetch(api)
-      const json = await res.json()
+      // ===== API FALLBACK STACK =====
+      const apis = [
+        `https://api.zenzxz.my.id/api/tools/lirik?title=${encodeURIComponent(text)}`,
+        `https://some-random-api.ml/lyrics?title=${encodeURIComponent(text)}`
+      ]
 
-      if (!json.success || !json.data?.result?.length) {
+      let songData = null
+
+      for (const api of apis) {
+        try {
+          const res = await fetch(api)
+          const json = await res.json()
+
+          if (json?.data?.result?.length) {
+            songData = json.data.result[0]
+            break
+          }
+
+          if (json?.lyrics) {
+            songData = {
+              trackName: json.title,
+              artistName: json.author,
+              plainLyrics: json.lyrics
+            }
+            break
+          }
+        } catch {
+          continue
+        }
+      }
+
+      if (!songData) {
         return sock.sendMessage(
           jid,
-          { text: '❌ *Lyrics not found. Try a different song.*' },
-          { quoted: message }
+          { text: "❌ Lyrics not found. Try another song." },
+          { quoted: msg }
         )
       }
 
-      const song = json.data.result[0]
-      const title = song.trackName || query
-      const artist = song.artistName || 'Unknown Artist'
-      const lyrics = song.plainLyrics?.trim() || 'No lyrics available.'
+      const title = songData.trackName || text
+      const artist = songData.artistName || "Unknown Artist"
+      const lyrics = songData.plainLyrics || "No lyrics available"
+      const thumb = "https://files.catbox.moe/5uli5p.jpeg"
 
-      const preview =
+      const shortLyrics =
         lyrics.length > 900
-          ? lyrics.slice(0, 900) + '\n\n_REPLY *1* FOR FULL LYRICS TXT_'
+          ? lyrics.slice(0, 900) + "\n\n(reply *1* for full lyrics file)"
           : lyrics
+
+      const caption =
+`🎼 *SILVA LYRICS*
+
+🎵 *Title:* ${title}
+🎤 *Artist:* ${artist}
+
+${shortLyrics}`
 
       const sent = await sock.sendMessage(
         jid,
         {
-          image: { url: 'https://files.catbox.moe/5uli5p.jpeg' },
-          caption:
-            `🎧 *${title}*\n` +
-            `🎤 Artist: ${artist}\n\n` +
-            `🎼 *Lyrics Preview*\n\n${preview}`,
-          contextInfo: {
-            mentionedJid: [message.key.participant || jid],
-            forwardingScore: 999,
-            isForwarded: true
-          }
+          image: { url: thumb },
+          caption
         },
-        { quoted: message }
+        { quoted: msg }
       )
 
-      // one-time reply handler (safe)
-      const timeout = setTimeout(() => {
-        sock.ev.off('messages.upsert', replyListener)
-      }, 120000)
+      // ===== FULL LYRICS HANDLER =====
+      const listener = async (update) => {
+        const m = update.messages?.[0]
+        if (!m?.message) return
 
-      const replyListener = async (u) => {
-        const m = u.messages?.[0]
-        if (!m?.message?.extendedTextMessage) return
+        const body =
+          m.message.conversation ||
+          m.message.extendedTextMessage?.text ||
+          ""
 
-        const txt = m.message.extendedTextMessage.text?.trim()
-        const ctx = m.message.extendedTextMessage.contextInfo
-
-        if (txt === '1' && ctx?.stanzaId === sent.key.id) {
-          clearTimeout(timeout)
-          sock.ev.off('messages.upsert', replyListener)
-
-          const file = `${title.replace(/[^a-z0-9]/gi, '_')}.txt`
-          fs.writeFileSync(file, `${title}\n${artist}\n\n${lyrics}`)
+        if (
+          body.trim() === "1" &&
+          m.message.extendedTextMessage?.contextInfo?.stanzaId === sent.key.id
+        ) {
+          const file = `${title.replace(/[^a-zA-Z0-9]/g, "_")}.txt`
+          fs.writeFileSync(file, `${title}\nby ${artist}\n\n${lyrics}`)
 
           await sock.sendMessage(
             jid,
             {
               document: fs.readFileSync(file),
-              mimetype: 'text/plain',
+              mimetype: "text/plain",
               fileName: file,
-              caption: '📄 *Full Lyrics File*'
+              caption: `🎶 Full lyrics: *${title}*`
             },
             { quoted: m }
           )
 
           fs.unlinkSync(file)
+          sock.ev.off("messages.upsert", listener)
         }
       }
 
-      sock.ev.on('messages.upsert', replyListener)
+      sock.ev.on("messages.upsert", listener)
+      setTimeout(() => sock.ev.off("messages.upsert", listener), 180000)
 
-    } catch (e) {
+    } catch (err) {
       await sock.sendMessage(
-        jid,
-        { text: `❌ *Lyrics error:* ${e.message}` },
-        { quoted: message }
+        msg.key.remoteJid,
+        {
+          text:
+`❌ *Lyrics Error*
+${err.message}`
+        },
+        { quoted: msg }
       )
     }
   }
 }
-
-module.exports = { handler }
