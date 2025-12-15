@@ -8,7 +8,7 @@ const handler = {
     group: false,
     admin: false,
     botAdmin: false,
-    owner: true, // Only owner can configure
+    owner: false, // Only owner can configure
     execute: async ({ jid, sock, message, args }) => {
         if (!args[0]) {
             return await sock.sendMessage(jid, {
