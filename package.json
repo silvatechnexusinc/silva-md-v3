@@ -37,6 +37,7 @@
     "crypto": "^1.0.1",
     "jimp": "1.6.0",
     "link-preview-js": "^3.0.5",
+    "node-fetch": "^3.2.0",
     "pino": "^8.16.1",
     "pino-pretty": "^11.2.1",
     "lodash": "^4.17.21",
