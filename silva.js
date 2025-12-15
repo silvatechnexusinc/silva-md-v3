@@ -24,7 +24,12 @@ const config = require('./config.js');
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
-    isForwarded: true
+    isForwarded: true,
+    forwardedNewsletterMessageInfo: {
+        newsletterJid: '120363200367779016@newsletter',
+        newsletterName: '◢◤ Silva Tech Nexus ◢◤',
+        serverMessageId: 144
+    }
 };
 
 // Proper pino logger with reduced verbosity
