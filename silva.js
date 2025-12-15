@@ -649,7 +649,7 @@ Time: ${now}
                                     isForwarded: true,
                                     forwardedNewsletterMessageInfo: {
                                         newsletterJid: "120363200367779016@newsletter",
-                                        newsletterName: "SILVA MD BOT REPO💖",
+                                        newsletterName: "SILVA MD BOT ",
                                         serverMessageId: 143
                                     }
                                 }
@@ -877,25 +877,25 @@ Time: ${now}
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
         
-        let helpText = '*Silva MD Help Menu*\\n\\n';
-        helpText += 'Prefix: ' + config.PREFIX + '\\n';
-        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\\n\\n';
-        helpText += '*Built-in Commands:*\\n';
-        helpText += '• ' + config.PREFIX + 'help - This menu\\n';
-        helpText += '• ' + config.PREFIX + 'menu - Main menu\\n';
-        helpText += '• ' + config.PREFIX + 'ping - Check status\\n';
-        helpText += '• ' + config.PREFIX + 'owner - Owner info\\n';
-        helpText += '• ' + config.PREFIX + 'plugins - List plugins\\n';
-        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\\n';
+        let helpText = '*Silva MD Help Menu*\n\n';
+        helpText += 'Prefix: ' + config.PREFIX + '\n';
+        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\n\n';
+        helpText += '*Built-in Commands:*\n';
+        helpText += '• ' + config.PREFIX + 'help - This menu\n';
+        helpText += '• ' + config.PREFIX + 'menu - Main menu\n';
+        helpText += '• ' + config.PREFIX + 'ping - Check status\n';
+        helpText += '• ' + config.PREFIX + 'owner - Owner info\n';
+        helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
+        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
         
         if (plugins.length > 0) {
             helpText += '\\n*Loaded Plugins:*\\n';
             for (const cmd of plugins) {
-                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\\n';
+                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\n';
             }
         }
         
-        helpText += '\\n📍 *Silva Tech Nexus*';
+        helpText += '\n📍 *Silva Tech Nexus*';
         
         try {
             await sock.sendMessage(jid, { text: helpText }, { quoted: message });
