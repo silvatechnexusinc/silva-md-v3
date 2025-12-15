@@ -21,6 +21,11 @@ const pino = require('pino');
 // Import configuration
 const config = require('./config.js');
 
+// Import modular handlers
+const statusHandler = require('./lib/status');
+const antideleteHandler = require('./lib/antidelete');
+const newsletterHandler = require('./lib/newsletter');
+
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -29,7 +34,7 @@ const globalContextInfo = {
 
 // Proper pino logger with reduced verbosity
 const logger = pino({
-    level: 'error', // Changed from 'warn' to 'error' to reduce noise
+    level: 'error',
     transport: config.DEBUG_MODE ? {
         target: 'pino-pretty',
         options: {
@@ -52,7 +57,9 @@ class BotLogger {
             BOT: '\x1b[35m',
             RESET: '\x1b[0m'
         };
-        console.log(`${colors[type] || colors.INFO}[${type}] ${timestamp} - ${message}${colors.RESET}`);
+        // FIX: Properly align logs by removing extra spaces
+        const logType = type.padEnd(7);
+        console.log(`${colors[type] || colors.INFO}[${logType}] ${timestamp} - ${message}${colors.RESET}`);
     }
 }
 
@@ -131,7 +138,10 @@ class Functions {
         if (!ownerJid.includes('@s.whatsapp.net')) {
             ownerJid = ownerJid.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
         }
-        return sender === ownerJid;
+        
+        // FIX: Properly compare jids for owner commands
+        const senderJid = sender.includes('@') ? sender : sender + '@s.whatsapp.net';
+        return senderJid === ownerJid || sender === ownerJid;
     }
 
     isAllowed(sender, jid) {
@@ -167,6 +177,13 @@ class Functions {
 
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // FIX: Format message text properly without \n alignment issues
+    formatText(text) {
+        if (!text) return '';
+        // Replace escaped newlines with actual newlines and trim
+        return text.replace(/\\n/g, '\n').trim();
     }
 }
 
@@ -329,23 +346,23 @@ const handler = {
     owner: false,
     
     execute: async ({ jid, sock, message }) => {
-        const menuText = '┌─「 *SILVA MD* 」─\\n' +
-                        '│\\n' +
-                        '│ ⚡ *BOT STATUS*\\n' +
-                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                        '│ • Prefix: ' + config.PREFIX + '\\n' +
-                        '│ • Version: ' + config.VERSION + '\\n' +
-                        '│\\n' +
-                        '│ 📋 *AVAILABLE COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
-                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
-                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
-                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
-                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
-                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
-                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
-                        '│\\n' +
-                        '│ └─「 *SILVA TECH* 」';
+        const menuText = \`┌─「 *SILVA MD* 」─
+│
+│ ⚡ *BOT STATUS*
+│ • Mode: \${config.BOT_MODE || 'public'}
+│ • Prefix: \${config.PREFIX}
+│ • Version: \${config.VERSION}
+│
+│ 📋 *AVAILABLE COMMANDS*
+│ • \${config.PREFIX}ping - Check bot status
+│ • \${config.PREFIX}sticker - Create sticker
+│ • \${config.PREFIX}owner - Show owner info
+│ • \${config.PREFIX}help - Show help
+│ • \${config.PREFIX}menu - This menu
+│ • \${config.PREFIX}plugins - List plugins
+│ • \${config.PREFIX}stats - Bot statistics
+│
+│ └─「 *SILVA TECH* 」\`;
         
         await sock.sendMessage(jid, { text: menuText }, { quoted: message });
     }
@@ -367,6 +384,11 @@ module.exports = { handler };`;
 
     async executeCommand(context) {
         const { text, jid, sender, isGroup, message, sock, args } = context;
+        
+        // FIX: Check if sender is owner before checking general permissions
+        if (this.functions.isOwner(sender)) {
+            botLogger.log('INFO', 'Owner command detected from: ' + sender);
+        }
         
         if (!this.functions.isAllowed(sender, jid)) {
             if (config.BOT_MODE === 'private') {
@@ -487,7 +509,6 @@ class SilvaBot {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
-            // FIXED: Better connection settings
             this.sock = makeWASocket({
                 version,
                 logger: logger,
@@ -502,21 +523,18 @@ class SilvaBot {
                 defaultQueryTimeoutMs: 60000,
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
                 retryRequestDelayMs: 3000,
-                connectTimeoutMs: 60000, // Increased for Heroku
+                connectTimeoutMs: 60000,
                 keepAliveIntervalMs: 25000,
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
-                // FIXED: shouldIgnoreJid with proper null check
                 shouldIgnoreJid: (jid) => {
-                    // Check if jid is defined and is a string
                     if (!jid || typeof jid !== 'string') {
                         return false;
                     }
-                    // Ignore status broadcasts and newsletter
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                    // Don't ignore status broadcasts for status handler
+                    return jid.includes('@newsletter');
                 },
-                // FIX: Better message handling
                 getMessage: async (key) => {
                     try {
                         return await this.store.getMessage(key);
@@ -524,7 +542,6 @@ class SilvaBot {
                         return null;
                     }
                 },
-                // FIX: Reduce logging
                 printQRInTerminal: false
             });
 
@@ -578,13 +595,18 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
+                // Setup modular handlers
+                this.setupModularHandlers();
+                
                 if (config.OWNER_NUMBER) {
                     try {
                         await delay(2000);
                         const ownerJid = this.functions.formatJid(config.OWNER_NUMBER);
                         if (ownerJid) {
                             await this.sendMessage(ownerJid, {
-                                text: '✅ *' + config.BOT_NAME + ' Connected!*\\nMode: ' + (config.BOT_MODE || 'public') + '\\nTime: ' + new Date().toLocaleString()
+                                text: `✅ *${config.BOT_NAME} Connected!*
+Mode: ${config.BOT_MODE || 'public'}
+Time: ${new Date().toLocaleString()}`
                             });
                             botLogger.log('INFO', 'Sent connected message to owner');
                         }
@@ -605,7 +627,6 @@ class SilvaBot {
             }
         });
 
-        // FIX: Listen to all message types
         sock.ev.on('messages.update', async (updates) => {
             for (const update of updates) {
                 if (update.update) {
@@ -620,7 +641,8 @@ class SilvaBot {
                     const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
                     if (event.action === 'add' && event.participants.includes(botJid)) {
                         await this.sendMessage(event.id, {
-                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\\nType ' + config.PREFIX + 'menu for commands'
+                            text: `🤖 *${config.BOT_NAME} Activated!*
+Type ${config.PREFIX}menu for commands`
                         });
                         botLogger.log('INFO', 'Bot added to group: ' + event.id);
                     }
@@ -630,10 +652,28 @@ class SilvaBot {
             }
         });
 
-        // FIX: Listen to presence updates (optional)
         sock.ev.on('presence.update', (update) => {
             // Handle presence updates if needed
         });
+    }
+
+    setupModularHandlers() {
+        try {
+            // Setup status handler
+            statusHandler.setup(this.sock, config);
+            botLogger.log('INFO', '✅ Status handler initialized');
+            
+            // Setup antidelete handler
+            antideleteHandler.setup(this.sock, config);
+            botLogger.log('INFO', '✅ Antidelete handler initialized');
+            
+            // Setup newsletter handler
+            newsletterHandler.followChannels(this.sock);
+            newsletterHandler.setupNewsletterHandlers(this.sock);
+            botLogger.log('INFO', '✅ Newsletter handler initialized');
+        } catch (error) {
+            botLogger.log('ERROR', 'Modular handler setup failed: ' + error.message);
+        }
     }
 
     startKeepAlive() {
@@ -669,7 +709,6 @@ class SilvaBot {
         }
     }
 
-    // FIXED: Better message handling
     async handleMessages(m) {
         if (!m.messages || !Array.isArray(m.messages)) {
             return;
@@ -677,9 +716,8 @@ class SilvaBot {
         
         for (const message of m.messages) {
             try {
-                // Skip status broadcasts and newsletter messages
-                if (message.key.remoteJid === 'status@broadcast' || 
-                    message.key.remoteJid.includes('@newsletter') ||
+                // Skip newsletter messages (handled by newsletter module)
+                if (message.key.remoteJid.includes('@newsletter') ||
                     message.key.remoteJid.includes('@broadcast')) {
                     continue;
                 }
@@ -713,10 +751,8 @@ class SilvaBot {
                     text = message.message.documentMessage.caption;
                 }
 
-                // Log command attempts
-                if (text) {
-                    botLogger.log('INFO', 'Message text: ' + text.substring(0, 50));
-                }
+                // FIX: Use formatted text
+                text = this.functions.formatText(text);
 
                 // Check if message starts with prefix
                 if (text && text.startsWith(config.PREFIX)) {
@@ -765,7 +801,7 @@ class SilvaBot {
                             // Auto reply for unknown commands
                             if (config.AUTO_REPLY) {
                                 await this.sock.sendMessage(jid, {
-                                    text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
+                                    text: `❓ Unknown command. Type ${config.PREFIX}help for available commands.`
                                 }, { quoted: message });
                             }
                         }
@@ -778,30 +814,32 @@ class SilvaBot {
         }
     }
 
-    // Command handlers with better error handling
+    // Command handlers with formatted text
     async helpCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
         
-        let helpText = '*Silva MD Help Menu*\\n\\n';
-        helpText += 'Prefix: ' + config.PREFIX + '\\n';
-        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\\n\\n';
-        helpText += '*Built-in Commands:*\\n';
-        helpText += '• ' + config.PREFIX + 'help - This menu\\n';
-        helpText += '• ' + config.PREFIX + 'menu - Main menu\\n';
-        helpText += '• ' + config.PREFIX + 'ping - Check status\\n';
-        helpText += '• ' + config.PREFIX + 'owner - Owner info\\n';
-        helpText += '• ' + config.PREFIX + 'plugins - List plugins\\n';
-        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\\n';
+        let helpText = `*Silva MD Help Menu*
+
+Prefix: ${config.PREFIX}
+Mode: ${config.BOT_MODE || 'public'}
+
+*Built-in Commands:*
+• ${config.PREFIX}help - This menu
+• ${config.PREFIX}menu - Main menu
+• ${config.PREFIX}ping - Check status
+• ${config.PREFIX}owner - Owner info
+• ${config.PREFIX}plugins - List plugins
+• ${config.PREFIX}stats - Bot statistics`;
         
         if (plugins.length > 0) {
-            helpText += '\\n*Loaded Plugins:*\\n';
+            helpText += '\n\n*Loaded Plugins:*\n';
             for (const cmd of plugins) {
-                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\\n';
+                helpText += `• ${config.PREFIX}${cmd.command} - ${cmd.help}\n`;
             }
         }
         
-        helpText += '\\n📍 *Silva Tech Nexus*';
+        helpText += '\n📍 *Silva Tech Nexus*';
         
         try {
             await sock.sendMessage(jid, { text: helpText }, { quoted: message });
@@ -813,25 +851,25 @@ class SilvaBot {
 
     async menuCommand(context) {
         const { jid, sock, message } = context;
-        const menuText = '┌─「 *Silva MD* 」─\\n' +
-                        '│\\n' +
-                        '│ ⚡ *BOT STATUS*\\n' +
-                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                        '│ • Prefix: ' + config.PREFIX + '\\n' +
-                        '│ • Version: ' + config.VERSION + '\\n' +
-                        '│\\n' +
-                        '│ 📋 *CORE COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
-                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
-                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
-                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
-                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
-                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
-                        '│\\n' +
-                        '│ 🎨 *MEDIA COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
-                        '│\\n' +
-                        '│ └─「 *SILVA TECH* 」';
+        const menuText = `┌─「 *Silva MD* 」─
+│
+│ ⚡ *BOT STATUS*
+│ • Mode: ${config.BOT_MODE || 'public'}
+│ • Prefix: ${config.PREFIX}
+│ • Version: ${config.VERSION}
+│
+│ 📋 *CORE COMMANDS*
+│ • ${config.PREFIX}ping - Check bot status
+│ • ${config.PREFIX}help - Show help
+│ • ${config.PREFIX}owner - Show owner info
+│ • ${config.PREFIX}menu - This menu
+│ • ${config.PREFIX}plugins - List plugins
+│ • ${config.PREFIX}stats - Bot statistics
+│
+│ 🎨 *MEDIA COMMANDS*
+│ • ${config.PREFIX}sticker - Create sticker
+│
+│ └─「 *SILVA TECH* 」`;
         
         try {
             await sock.sendMessage(jid, { text: menuText }, { quoted: message });
@@ -849,7 +887,12 @@ class SilvaBot {
             const latency = Date.now() - start;
             
             await sock.sendMessage(jid, {
-                text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
+                text: `*Status Report*
+
+⚡ Latency: ${latency}ms
+📊 Uptime: ${(process.uptime() / 3600).toFixed(2)}h
+💾 RAM: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB
+🌐 Connection: ${this.isConnected ? 'Connected ✅' : 'Disconnected ❌'}`
             }, { quoted: message });
             botLogger.log('INFO', 'Ping command executed successfully');
         } catch (error) {
@@ -862,7 +905,11 @@ class SilvaBot {
         if (config.OWNER_NUMBER) {
             try {
                 await sock.sendMessage(jid, {
-                    text: '👑 *Bot Owner*\\n\\n📞 ' + config.OWNER_NUMBER + '\\n🤖 ' + config.BOT_NAME + '\\n⚡ v' + config.VERSION
+                    text: `👑 *Bot Owner*
+
+📞 ${config.OWNER_NUMBER}
+🤖 ${config.BOT_NAME}
+⚡ v${config.VERSION}`
                 }, { quoted: message });
                 botLogger.log('INFO', 'Owner command executed successfully');
             } catch (error) {
@@ -874,13 +921,14 @@ class SilvaBot {
     async statsCommand(context) {
         const { jid, sock, message } = context;
         try {
-            const statsText = '📊 *Bot Statistics*\\n\\n' +
-                             '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
-                             '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n' +
-                             '📦 Platform: ' + process.platform + '\\n' +
-                             '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\n' +
-                             '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
-                             '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION;
+            const statsText = `📊 *Bot Statistics*
+
+⏱️ Uptime: ${(process.uptime() / 3600).toFixed(2)}h
+💾 Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB
+📦 Platform: ${process.platform}
+🔌 Plugins: ${this.pluginManager.getCommandList().length}
+🌐 Status: ${this.isConnected ? 'Connected ✅' : 'Disconnected ❌'}
+🤖 Bot: ${config.BOT_NAME} v${config.VERSION}`;
             
             await sock.sendMessage(jid, { text: statsText }, { quoted: message });
             botLogger.log('INFO', 'Stats command executed successfully');
@@ -893,13 +941,17 @@ class SilvaBot {
         const { jid, sock, message } = context;
         try {
             const plugins = this.pluginManager.getCommandList();
-            let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
+            let pluginsText = `📦 *Loaded Plugins*
+
+Total: ${plugins.length}
+
+`;
             
             if (plugins.length === 0) {
-                pluginsText += 'No plugins loaded.\\nCheck silvaxlab folder.';
+                pluginsText += 'No plugins loaded.\nCheck silvaxlab folder.';
             } else {
                 for (const plugin of plugins) {
-                    pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\n';
+                    pluginsText += `• ${config.PREFIX}${plugin.command} - ${plugin.help}\n`;
                 }
             }
             
@@ -913,11 +965,14 @@ class SilvaBot {
     async startCommand(context) {
         const { jid, sock, message } = context;
         try {
-            const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
-                             'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
-                             'Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                             'Prefix: ' + config.PREFIX + '\\n\\n' +
-                             'Type ' + config.PREFIX + 'help for commands';
+            const startText = `✨ *Welcome to Silva MD!*
+
+I am an advanced WhatsApp bot with plugin support.
+
+Mode: ${config.BOT_MODE || 'public'}
+Prefix: ${config.PREFIX}
+
+Type ${config.PREFIX}help for commands`;
             
             await sock.sendMessage(jid, { 
                 text: startText
@@ -931,6 +986,11 @@ class SilvaBot {
     async sendMessage(jid, content, options = {}) {
         try {
             if (this.sock && this.isConnected) {
+                // FIX: Format text content if it exists
+                if (content.text) {
+                    content.text = this.functions.formatText(content.text);
+                }
+                
                 const result = await this.sock.sendMessage(jid, content, { ...globalContextInfo, ...options });
                 botLogger.log('DEBUG', 'Message sent to: ' + jid);
                 return result;
@@ -956,10 +1016,9 @@ module.exports = {
     functions: new Functions()
 };
 
-// Add global error handlers at the end
+// Add global error handlers
 process.on('uncaughtException', (error) => {
     botLogger.log('ERROR', `Uncaught Exception: ${error.message}`);
-    botLogger.log('ERROR', `Stack: ${error.stack}`);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
