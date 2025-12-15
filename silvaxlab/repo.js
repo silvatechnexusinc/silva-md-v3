@@ -1,3 +1,5 @@
+const axios = require('axios');
+
 const handler = {
     help: ['script', 'repo', 'sc'],
     tags: ['main'],
@@ -9,6 +11,7 @@ const handler = {
 
     execute: async ({ jid, sock, message }) => {
         try {
+            const sender = message.key.participant || message.key.remoteJid;
             const repoUrl = "https://github.com/SilvaTechB/silva-md-bot";
             const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
             if (!match) throw new Error("Invalid repository URL");
@@ -36,12 +39,12 @@ OFFICIAL GROUP: https://chat.whatsapp.com/Ik0YpP0dM8jHVjScf1Ay5S
 \`\`\` USER FRIENDLY SILVA MD BOT 💥 \`\`\`
             `.trim();
 
-            const profilePic = await sock.profilePictureUrl(message.sender, "image").catch(() => data.owner.avatar_url);
+            const profilePic = await sock.profilePictureUrl(sender, "image").catch(() => data.owner.avatar_url || '');
 
             const externalAd = {
                 title: "Silva MD Bot Repository",
                 body: "Click to visit GitHub",
-                thumbnailUrl: data.owner.avatar_url,
+                thumbnailUrl: data.owner.avatar_url || '',
                 sourceUrl: data.html_url,
                 showAdAttribution: true
             };
@@ -52,7 +55,7 @@ OFFICIAL GROUP: https://chat.whatsapp.com/Ik0YpP0dM8jHVjScf1Ay5S
                 image: { url: profilePic },
                 caption: repoInfo,
                 contextInfo: {
-                    mentionedJid: [message.sender],
+                    mentionedJid: [sender],
                     forwardingScore: 999,
                     isForwarded: true,
                     forwardedNewsletterMessageInfo: {
@@ -69,4 +72,4 @@ OFFICIAL GROUP: https://chat.whatsapp.com/Ik0YpP0dM8jHVjScf1Ay5S
     }
 };
 
-export default handler;
+module.exports = { handler };
