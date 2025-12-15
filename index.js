@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Create necessary directories
 const fs = require('fs');
-const dirs = ['sessions', 'silvaxlab', 'temp', 'logs'];
+const dirs = ['sessions', 'silvaxlab', 'temp', 'logs', 'lib'];
 dirs.forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
