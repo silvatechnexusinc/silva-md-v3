@@ -25,11 +25,8 @@ const pino = require('pino');
 // Import configuration
 const config = require('./config.js');
 
-// Import status functions
+// Import status handler
 const statusHandler = require('./lib/status.js');
-
-// Import functions
-const functions = require('./lib/functions.js');
 
 // Global Context Info
 const globalContextInfo = {
@@ -754,7 +751,23 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
         sock.ev.on('messages.upsert', async (m) => {
             try {
-                botLogger.log('MESSAGE', `📥 Received ${m.messages?.length || 0} message(s)`);
+                const { messages, type } = m;
+                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
+                
+                // First, handle status updates using the status handler
+                await statusHandler.handle({
+                    messages,
+                    type,
+                    sock,
+                    config,
+                    logMessage: (level, msg) => {
+                        console.log(`[${level}] ${msg}`);
+                    },
+                    unwrapStatus: this.unwrapStatus.bind(this),
+                    saveMedia: this.saveMedia.bind(this)
+                });
+                
+                // Then handle regular messages
                 await this.handleMessages(m);
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
@@ -815,21 +828,48 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }
             }
         });
+    }
 
-        // Handle status updates using the imported status handler
-        sock.ev.on('messages.upsert', async (m) => {
-            try {
-                if (m.messages && Array.isArray(m.messages)) {
-                    await statusHandler.handleStatus(m.messages, this.sock, {
-                        autoView: this.autoStatusView,
-                        autoLike: this.autoStatusLike,
-                        logger: botLogger
-                    });
-                }
-            } catch (error) {
-                botLogger.log('ERROR', 'Status handling error: ' + error.message);
+    // Utility method to unwrap status message
+    unwrapStatus(message) {
+        try {
+            if (message.message?.protocolMessage?.type === 14) {
+                const statusMessage = message.message.protocolMessage;
+                return {
+                    key: message.key,
+                    message: statusMessage,
+                    isStatus: true
+                };
             }
-        });
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // Utility method to save media
+    async saveMedia(message, filename) {
+        try {
+            if (getContentType(message.message)) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+                    logger,
+                    reuploadRequest: this.sock.updateMediaMessage
+                });
+                
+                const tempDir = './temp';
+                if (!fs.existsSync(tempDir)) {
+                    fs.mkdirSync(tempDir, { recursive: true });
+                }
+                
+                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
+                fs.writeFileSync(filePath, buffer);
+                return filePath;
+            }
+            return null;
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
+            return null;
+        }
     }
 
     // Detect bot's LID by checking messages sent by the bot
