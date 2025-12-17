@@ -104,7 +104,7 @@ async function loadSession() {
 // ==============================
 class Functions {
     constructor(sock) {
-        this.sock = sock; // Pass sock reference
+        this.sock = sock;
         this.tempDir = path.join(__dirname, './temp');
         if (!fs.existsSync(this.tempDir)) {
             fs.mkdirSync(this.tempDir, { recursive: true });
@@ -124,19 +124,16 @@ class Functions {
     }
 
     isOwner(sender) {
-        // Clean sender JID to number only (handles both @lid and @s.whatsapp.net)
         let cleanSender = sender
             .replace(/@lid$/, '')
             .replace(/@s.whatsapp.net$/, '')
             .replace(/[^0-9]/g, '');
 
-        // Always include the bot's own number as owner
         let botNumber = null;
         if (this.sock?.user?.id) {
             botNumber = this.sock.user.id.split(':')[0].split('@')[0];
         }
 
-        // Collect all possible owner numbers
         let ownerNumbers = [];
         if (config.OWNER_NUMBER) {
             if (Array.isArray(config.OWNER_NUMBER)) {
@@ -148,15 +145,9 @@ class Functions {
         if (config.CONNECTED_NUMBER) {
             ownerNumbers.push(config.CONNECTED_NUMBER.replace(/[^0-9]/g, ''));
         }
-        if (botNumber) {
-            ownerNumbers.push(botNumber);
-        }
+        if (botNumber) ownerNumbers.push(botNumber);
 
-        // Remove duplicates
         ownerNumbers = [...new Set(ownerNumbers.filter(Boolean))];
-
-        // Debug log (remove after testing)
-        // botLogger.log('DEBUG', `isOwner check: sender=${sender} | clean=${cleanSender} | owners=${ownerNumbers.join(', ')} | result=${ownerNumbers.includes(cleanSender)}`);
 
         return ownerNumbers.includes(cleanSender);
     }
@@ -277,7 +268,6 @@ class PluginManager {
         const { text, jid, sender, isGroup, message, sock } = context;
         const functions = new Functions(sock);
        
-        // Owner always allowed
         if (!functions.isOwner(sender)) {
             if (!functions.isAllowed(sender, jid)) {
                 if (config.BOT_MODE === 'private') {
@@ -344,7 +334,7 @@ class PluginManager {
     }
 }
 // ==============================
-// 🤖 MAIN BOT CLASS
+// 🤖 MAIN BOT CLASS (FIXED CRASH)
 // ==============================
 class SilvaBot {
     constructor() {
@@ -499,15 +489,39 @@ class SilvaBot {
             if (this.autoStatusView || this.autoStatusLike) await this.handleStatusMessages(m);
         });
     }
+    startKeepAlive() {
+        this.stopKeepAlive();
+        this.keepAliveInterval = setInterval(async () => {
+            if (this.sock && this.isConnected) {
+                try {
+                    await this.sock.sendPresenceUpdate('available');
+                } catch (error) {
+                    // Silent fail
+                }
+            }
+        }, 20000);
+    }
+    stopKeepAlive() {
+        if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
+            this.keepAliveInterval = null;
+        }
+    }
+    cleanupSessions() {
+        try {
+            const sessionsDir = './sessions';
+            if (fs.existsSync(sessionsDir)) {
+                fs.rmSync(sessionsDir, { recursive: true, force: true });
+                fs.mkdirSync(sessionsDir, { recursive: true });
+                botLogger.log('INFO', 'Sessions cleaned');
+            }
+        } catch (error) {}
+    }
     async handleStatusMessages(m) {
         for (const msg of m.messages || []) {
             if (msg.key.remoteJid === 'status@broadcast') {
-                if (this.autoStatusView) {
-                    await this.sock.readMessages([{ key: msg.key }]);
-                }
-                if (this.autoStatusLike) {
-                    await this.sock.sendMessage(msg.key.remoteJid, { react: { text: '❤️', key: msg.key } });
-                }
+                if (this.autoStatusView) await this.sock.readMessages([{ key: msg.key }]);
+                if (this.autoStatusLike) await this.sock.sendMessage(msg.key.remoteJid, { react: { text: '❤️', key: msg.key } });
             }
         }
     }
@@ -540,7 +554,6 @@ class SilvaBot {
                 const isGroup = jid.endsWith('@g.us');
                 const functions = new Functions(this.sock);
                
-                // Debug owner detection
                 if (functions.isOwner(sender)) {
                     botLogger.log('INFO', 'Owner message detected from: ' + sender);
                 }
@@ -577,7 +590,7 @@ class SilvaBot {
             }
         }
     }
-    // Built-in commands (unchanged)
+    // Built-in commands
     async helpCommand({ jid, sock, message }) {
         await sock.sendMessage(jid, { text: 'Type ' + config.PREFIX + 'menu for commands' }, { quoted: message });
     }
