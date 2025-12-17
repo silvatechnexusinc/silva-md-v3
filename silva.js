@@ -624,21 +624,14 @@ class SilvaBot {
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
-                shouldIgnoreJid: (jid) => {
-                    if (!jid || typeof jid !== 'string') {
-                        return false;
-                    }
-                    // We don't ignore anything - both status and newsletters will be handled
-                    return false;
-                },
                 getMessage: async (key) => {
                     try {
                         return await this.store.getMessage(key);
                     } catch (error) {
                         return null;
                     }
-                },
-                printQRInTerminal: true
+                }
+                // Removed printQRInTerminal as it's deprecated
             });
 
             this.setupEvents(saveCreds);
@@ -701,9 +694,6 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
-                // Auto-follow newsletters on connection
-                await this.autoFollowNewsletters();
-                
                 // Send connection message to owner
                 await this.sendConnectionMessage();
             }
@@ -714,23 +704,54 @@ class SilvaBot {
         sock.ev.on('messages.upsert', async (m) => {
             try {
                 const { messages, type } = m;
-                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
+                if (!messages || !Array.isArray(messages)) return;
+                
+                botLogger.log('MESSAGE', `📥 Received ${messages.length} message(s) of type: ${type}`);
+                
+                // Filter out status messages that can't be decrypted
+                const filteredMessages = messages.filter(msg => {
+                    // Skip status broadcasts that have decryption errors
+                    if (msg.key?.remoteJid === 'status@broadcast') {
+                        // Check if message has actual content or is just a decryption error placeholder
+                        if (!msg.message || Object.keys(msg.message).length === 0) {
+                            botLogger.log('DEBUG', 'Skipping empty status message');
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+                
+                if (filteredMessages.length === 0) return;
                 
                 // Handle status updates using your perfect status handler
                 await statusHandler.handle({
-                    messages,
+                    messages: filteredMessages,
                     type,
                     sock,
                     config,
                     logMessage: (level, msg) => {
-                        console.log(`[${level}] ${msg}`);
+                        // Convert level string to uppercase for consistency
+                        const logLevel = level.toUpperCase();
+                        if (logLevel === 'DEBUG') {
+                            botLogger.log('DEBUG', msg);
+                        } else if (logLevel === 'INFO') {
+                            botLogger.log('INFO', msg);
+                        } else if (logLevel === 'WARN') {
+                            botLogger.log('WARNING', msg);
+                        } else if (logLevel === 'ERROR') {
+                            botLogger.log('ERROR', msg);
+                        } else if (logLevel === 'SUCCESS') {
+                            botLogger.log('SUCCESS', msg);
+                        } else {
+                            botLogger.log('INFO', msg);
+                        }
                     },
                     unwrapStatus: this.unwrapStatus.bind(this),
                     saveMedia: this.saveMedia.bind(this)
                 });
                 
                 // Handle regular messages
-                await this.handleMessages(m);
+                await this.handleMessages({ messages: filteredMessages, type });
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
@@ -792,23 +813,6 @@ class SilvaBot {
         });
     }
 
-    // Auto-follow newsletters using your perfect newsletter handler
-    async autoFollowNewsletters() {
-        try {
-            botLogger.log('INFO', '📰 Auto-following newsletters...');
-            await newsletterHandler.follow({
-                sock: this.sock,
-                config,
-                logMessage: (level, msg) => {
-                    botLogger.log(level.toUpperCase(), msg);
-                }
-            });
-            botLogger.log('SUCCESS', '✅ Newsletter auto-follow completed');
-        } catch (error) {
-            botLogger.log('ERROR', 'Failed to auto-follow newsletters: ' + error.message);
-        }
-    }
-
     // Send connection message to owner
     async sendConnectionMessage() {
         if (config.OWNER_NUMBER) {
@@ -857,67 +861,79 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     // Utility method to unwrap status message
     unwrapStatus(message) {
         try {
-            if (message.message?.protocolMessage?.type === 14) {
+            if (!message || !message.message) {
+                return { inner: null, msgType: null };
+            }
+            
+            // Check if this is a protocol message (status update)
+            if (message.message.protocolMessage?.type === 14) {
                 const statusMessage = message.message.protocolMessage;
                 return {
                     key: message.key,
                     message: statusMessage,
-                    isStatus: true
+                    isStatus: true,
+                    inner: statusMessage,
+                    msgType: Object.keys(statusMessage || {})[0] || 'unknown'
                 };
             }
-            return null;
+            
+            // Regular message
+            const msgType = Object.keys(message.message || {})[0];
+            return {
+                inner: message.message[msgType],
+                msgType: msgType
+            };
         } catch (error) {
-            return null;
+            botLogger.log('ERROR', 'Failed to unwrap status: ' + error.message);
+            return { inner: null, msgType: null };
         }
     }
 
     // Utility method to save media
     async saveMedia(message, msgType, sock, caption = '') {
         try {
-            if (getContentType(message.message)) {
-                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
-                    logger,
-                    reuploadRequest: sock.updateMediaMessage
-                });
-                
-                const tempDir = './temp';
-                if (!fs.existsSync(tempDir)) {
-                    fs.mkdirSync(tempDir, { recursive: true });
-                }
-                
-                const filePath = path.join(tempDir, `status_${Date.now()}.${msgType.replace('Message', '')}`);
-                fs.writeFileSync(filePath, buffer);
-                
-                // Send to saved messages
-                const content = {
-                    [msgType]: {
-                        url: filePath,
-                        caption: caption,
-                        mimetype: this.getMimeType(msgType)
-                    }
-                };
-                
-                await sock.sendMessage(sock.user.id, content);
-                fs.unlinkSync(filePath);
-                
-                return filePath;
+            if (!message || !message.message) {
+                return null;
             }
-            return null;
+            
+            const contentType = getContentType(message.message);
+            if (!contentType) {
+                return null;
+            }
+            
+            const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+                logger,
+                reuploadRequest: sock.updateMediaMessage
+            });
+            
+            const tempDir = './temp';
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            
+            const timestamp = Date.now();
+            const extension = this.getFileExtension(msgType);
+            const filePath = path.join(tempDir, `status_${timestamp}.${extension}`);
+            fs.writeFileSync(filePath, buffer);
+            
+            botLogger.log('INFO', `Saved media to: ${filePath}`);
+            return filePath;
         } catch (error) {
             botLogger.log('ERROR', 'Failed to save media: ' + error.message);
             return null;
         }
     }
 
-    // Get MIME type from message type
-    getMimeType(msgType) {
-        const mimeTypes = {
-            imageMessage: 'image/jpeg',
-            videoMessage: 'video/mp4',
-            audioMessage: 'audio/mp4',
-            documentMessage: 'application/octet-stream'
+    // Get file extension from message type
+    getFileExtension(msgType) {
+        const extensions = {
+            imageMessage: 'jpg',
+            videoMessage: 'mp4',
+            audioMessage: 'mp3',
+            documentMessage: 'bin',
+            stickerMessage: 'webp'
         };
-        return mimeTypes[msgType] || 'application/octet-stream';
+        return extensions[msgType] || 'bin';
     }
 
     // Detect bot's LID by checking messages sent by the bot
