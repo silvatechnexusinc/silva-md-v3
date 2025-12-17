@@ -25,6 +25,12 @@ const pino = require('pino');
 // Import configuration
 const config = require('./config.js');
 
+// Import status functions
+const statusHandler = require('./lib/status.js');
+
+// Import functions
+const functions = require('./lib/functions.js');
+
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -121,7 +127,7 @@ async function loadSession() {
 // ==============================
 // 🔧 UTILITY FUNCTIONS (FIXED FOR LID OWNER DETECTION)
 // ==============================
-class Functions {
+class FunctionsWrapper {
     constructor() {
         this.tempDir = path.join(__dirname, './temp');
         if (!fs.existsSync(this.tempDir)) {
@@ -383,7 +389,7 @@ class PluginManager {
     constructor() {
         this.commandHandlers = new Map();
         this.pluginInfo = new Map();
-        this.functions = new Functions();
+        this.functions = new FunctionsWrapper();
     }
 
     async loadPlugins(dir = 'silvaxlab') {
@@ -543,7 +549,7 @@ class SilvaBot {
         this.groupCache = new NodeCache({ stdTTL: 300, useClones: false });
         this.pluginManager = new PluginManager();
         this.isConnected = false;
-        this.functions = new Functions();
+        this.functions = new FunctionsWrapper();
         
         // Settings
         this.antiDeleteEnabled = config.ANTIDELETE || true;
@@ -701,49 +707,41 @@ class SilvaBot {
                 
                 // Send connection message to owner
                 if (config.OWNER_NUMBER) {
-    try {
-        await delay(2000);
+                    try {
+                        await delay(2000);
 
-        const ownerNumbers = Array.isArray(config.OWNER_NUMBER)
-            ? config.OWNER_NUMBER
-            : [config.OWNER_NUMBER];
+                        const ownerNumbers = Array.isArray(config.OWNER_NUMBER)
+                            ? config.OWNER_NUMBER
+                            : [config.OWNER_NUMBER];
 
-        for (const ownerNum of ownerNumbers) {
-            const ownerJid = this.functions.formatJid(ownerNum);
-            if (!ownerJid) continue;
+                        for (const ownerNum of ownerNumbers) {
+                            const ownerJid = this.functions.formatJid(ownerNum);
+                            if (!ownerJid) continue;
 
-            const now = new Date().toLocaleString();
+                            const now = new Date().toLocaleString();
 
-            const messageText = `
+                            const messageText = `
 ✅ *${config.BOT_NAME} Connected!*
 Mode: ${config.BOT_MODE || 'public'}
 Time: ${now}
 Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
 Connected Number: ${this.functions.botNumber || 'Unknown'}
-            `.trim();
+                            `.trim();
 
-            await this.sendMessage(ownerJid, {
-                text: messageText,
-                contextInfo: {
-                    mentionedJid: [ownerJid],
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "SILVA WELCOMES YOU 💖🥰",
-                        serverMessageId: 143
-                    }
-                }
-            });
-        }
-    } catch (err) {
-        console.error('Failed to notify owner:', err);
-    }
-}
-
-                            }
+                            await this.sendMessage(ownerJid, {
+                                text: messageText,
+                                contextInfo: {
+                                    mentionedJid: [ownerJid],
+                                    forwardingScore: 999,
+                                    isForwarded: true,
+                                    forwardedNewsletterMessageInfo: {
+                                        newsletterJid: "120363200367779016@newsletter",
+                                        newsletterName: "SILVA WELCOMES YOU 💖🥰",
+                                        serverMessageId: 143
+                                    }
+                                }
+                            });
                         }
-                        
                         botLogger.log('INFO', 'Sent connected message to owner(s)');
                     } catch (error) {
                         botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
@@ -792,7 +790,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
                     if (event.action === 'add' && event.participants.includes(botJid)) {
                         await this.sendMessage(event.id, {
-                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\\nType ' + config.PREFIX + 'menu for commands'
+                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
                         });
                         botLogger.log('INFO', 'Bot added to group: ' + event.id);
                     }
@@ -817,6 +815,21 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }
             }
         });
+
+        // Handle status updates using the imported status handler
+        sock.ev.on('messages.upsert', async (m) => {
+            try {
+                if (m.messages && Array.isArray(m.messages)) {
+                    await statusHandler.handleStatus(m.messages, this.sock, {
+                        autoView: this.autoStatusView,
+                        autoLike: this.autoStatusLike,
+                        logger: botLogger
+                    });
+                }
+            } catch (error) {
+                botLogger.log('ERROR', 'Status handling error: ' + error.message);
+            }
+        });
     }
 
     // Detect bot's LID by checking messages sent by the bot
@@ -833,44 +846,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         } catch (error) {
             botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
-        }
-    }
-
-    // Handle status messages
-    async handleStatusMessages(m) {
-        if (!m.messages || !Array.isArray(m.messages)) return;
-        
-        for (const message of m.messages) {
-            try {
-                if (message.key.remoteJid === 'status@broadcast') {
-                    botLogger.log('INFO', '📊 Status update detected');
-                    
-                    if (this.autoStatusView) {
-                        try {
-                            await this.sock.readMessages([message.key]);
-                            botLogger.log('SUCCESS', '✅ Status auto-viewed');
-                        } catch (error) {
-                            botLogger.log('ERROR', 'Failed to auto-view status: ' + error.message);
-                        }
-                    }
-                    
-                    if (this.autoStatusLike) {
-                        try {
-                            await this.sock.sendMessage(message.key.remoteJid, {
-                                react: {
-                                    text: '❤️',
-                                    key: message.key
-                                }
-                            });
-                            botLogger.log('SUCCESS', '✅ Status auto-liked');
-                        } catch (error) {
-                            botLogger.log('ERROR', 'Failed to auto-like status: ' + error.message);
-                        }
-                    }
-                }
-            } catch (error) {
-                // Silent fail
-            }
         }
     }
 
@@ -904,16 +879,16 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     const jid = update.key.remoteJid;
                     if (jid.endsWith('@g.us')) {
                         await this.sock.sendMessage(jid, {
-                            text: `🚨 *Message Deleted*\\n\\n` +
-                                  `👤 *Sender:* @${sender.split('@')[0]}\\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\\n\\n` +
+                            text: `🚨 *Message Deleted*\n\n` +
+                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
                                   `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
                             mentions: [sender]
                         });
                     } else {
                         await this.sock.sendMessage(jid, {
-                            text: `🚨 *You deleted a message*\\n\\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\\n\\n` +
+                            text: `🚨 *You deleted a message*\n\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
                                   `Type \`${config.PREFIX}antidelete recover 1\` to recover`
                         });
                     }
@@ -1110,12 +1085,12 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         if (!args[0]) {
             const status = this.antiDeleteEnabled ? '✅ Enabled' : '❌ Disabled';
             await sock.sendMessage(jid, {
-                text: '🚨 *Anti-Delete System*\\n\\n' +
-                      `Status: ${status}\\n` +
-                      `Stored Messages: ${this.recentDeletedMessages.length}\\n\\n` +
-                      `• \`${config.PREFIX}antidelete on\` - Enable (Owner only)\\n` +
-                      `• \`${config.PREFIX}antidelete off\` - Disable (Owner only)\\n` +
-                      `• \`${config.PREFIX}antidelete list\` - Show recent\\n` +
+                text: '🚨 *Anti-Delete System*\n\n' +
+                      `Status: ${status}\n` +
+                      `Stored Messages: ${this.recentDeletedMessages.length}\n\n` +
+                      `• \`${config.PREFIX}antidelete on\` - Enable (Owner only)\n` +
+                      `• \`${config.PREFIX}antidelete off\` - Disable (Owner only)\n` +
+                      `• \`${config.PREFIX}antidelete list\` - Show recent\n` +
                       `• \`${config.PREFIX}antidelete recover [num]\` - Recover message`
             }, { quoted: message });
             return;
@@ -1148,17 +1123,17 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 
             case 'list':
                 if (this.recentDeletedMessages.length > 0) {
-                    let listText = '📋 *Recently Deleted Messages*\\n\\n';
+                    let listText = '📋 *Recently Deleted Messages*\n\n';
                     this.recentDeletedMessages.forEach((msg, index) => {
                         const timeAgo = Math.floor((Date.now() - msg.deletedAt) / 1000);
-                        listText += `${index + 1}. ${msg.senderName} - ${timeAgo}s ago\\n`;
+                        listText += `${index + 1}. ${msg.senderName} - ${timeAgo}s ago\n`;
                         if (msg.text && msg.text.length > 50) {
-                            listText += `   ${msg.text.substring(0, 50)}...\\n`;
+                            listText += `   ${msg.text.substring(0, 50)}...\n`;
                         } else if (msg.text) {
-                            listText += `   ${msg.text}\\n`;
+                            listText += `   ${msg.text}\n`;
                         }
                     });
-                    listText += '\\nUse `' + config.PREFIX + 'antidelete recover [number]` to recover.';
+                    listText += '\nUse `' + config.PREFIX + 'antidelete recover [number]` to recover.';
                     await sock.sendMessage(jid, { text: listText }, { quoted: message });
                 } else {
                     await sock.sendMessage(jid, {
@@ -1183,11 +1158,11 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         });
                         
                         await sock.sendMessage(jid, {
-                            text: `🔁 *Message Recovered*\\n\\nFrom: ${deletedMsg.senderName}\\nDeleted: ${Math.floor((Date.now() - deletedMsg.deletedAt) / 1000)}s ago`
+                            text: `🔁 *Message Recovered*\n\nFrom: ${deletedMsg.senderName}\nDeleted: ${Math.floor((Date.now() - deletedMsg.deletedAt) / 1000)}s ago`
                         }, { quoted: message });
                     } else if (deletedMsg.text) {
                         await sock.sendMessage(jid, {
-                            text: `🔁 *Message Recovered*\\n\\nFrom: ${deletedMsg.senderName}\\n\\n${deletedMsg.text}`,
+                            text: `🔁 *Message Recovered*\n\nFrom: ${deletedMsg.senderName}\n\n${deletedMsg.text}`,
                             mentions: [deletedMsg.sender]
                         }, { quoted: message });
                     }
@@ -1221,13 +1196,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         
         if (!action) {
             await sock.sendMessage(jid, {
-                text: `📊 *Status Auto Settings*\\n\\n` +
-                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\\n` +
-                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\\n\\n` +
-                      `Commands:\\n` +
-                      `• ${config.PREFIX}statusview on - Enable both\\n` +
-                      `• ${config.PREFIX}statusview off - Disable both\\n` +
-                      `• ${config.PREFIX}statusview view - Toggle auto-view\\n` +
+                text: `📊 *Status Auto Settings*\n\n` +
+                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
+                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
+                      `Commands:\n` +
+                      `• ${config.PREFIX}statusview on - Enable both\n` +
+                      `• ${config.PREFIX}statusview off - Disable both\n` +
+                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
                       `• ${config.PREFIX}statusview like - Toggle auto-like`
             }, { quoted: message });
             return;
@@ -1289,7 +1264,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         helpText += '• ' + config.PREFIX + 'statusview - Auto status settings (Owner)\n';
         
         if (plugins.length > 0) {
-            helpText += '\\n*Loaded Plugins:*\\n';
+            helpText += '\n*Loaded Plugins:*\n';
             for (const cmd of plugins) {
                 helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\n';
             }
@@ -1302,26 +1277,26 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
     async menuCommand(context) {
         const { jid, sock, message } = context;
-        const menuText = '┌─「 *Silva MD* 」─\\n' +
-                        '│\\n' +
-                        '│ ⚡ *BOT STATUS*\\n' +
-                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                        '│ • Prefix: ' + config.PREFIX + '\\n' +
-                        '│ • Version: ' + config.VERSION + '\\n' +
-                        '│ • Anti-delete: ' + (this.antiDeleteEnabled ? '✅' : '❌') + '\\n' +
-                        '│\\n' +
-                        '│ 📋 *CORE COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
-                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
-                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
-                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
-                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
-                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
-                        '│ • ' + config.PREFIX + 'antidelete - Recover deleted messages\\n' +
-                        '│\\n' +
-                        '│ 🎨 *MEDIA COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
-                        '│\\n' +
+        const menuText = '┌─「 *Silva MD* 」─\n' +
+                        '│\n' +
+                        '│ ⚡ *BOT STATUS*\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\n' +
+                        '│ • Version: ' + config.VERSION + '\n' +
+                        '│ • Anti-delete: ' + (this.antiDeleteEnabled ? '✅' : '❌') + '\n' +
+                        '│\n' +
+                        '│ 📋 *CORE COMMANDS*\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\n' +
+                        '│ • ' + config.PREFIX + 'antidelete - Recover deleted messages\n' +
+                        '│\n' +
+                        '│ 🎨 *MEDIA COMMANDS*\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\n' +
+                        '│\n' +
                         '│ └─「 *SILVA TECH* 」';
         
         await sock.sendMessage(jid, { text: menuText }, { quoted: message });
@@ -1334,29 +1309,29 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
+            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
         }, { quoted: message });
     }
 
     async ownerCommand(context) {
         const { jid, sock, message } = context;
-        let ownerText = '👑 *Bot Owner*\\n\\n';
+        let ownerText = '👑 *Bot Owner*\n\n';
         
         if (this.functions.botNumber) {
-            ownerText += `🤖 Connected Bot: ${this.functions.botNumber}\\n`;
+            ownerText += `🤖 Connected Bot: ${this.functions.botNumber}\n`;
         }
         
         if (this.functions.botLid) {
-            ownerText += `🔑 Bot LID: ${this.functions.botLid}\\n`;
+            ownerText += `🔑 Bot LID: ${this.functions.botLid}\n`;
         }
         
         if (config.OWNER_NUMBER) {
             if (Array.isArray(config.OWNER_NUMBER)) {
                 config.OWNER_NUMBER.forEach((num, idx) => {
-                    ownerText += `📞 Owner ${idx + 1}: ${num}\\n`;
+                    ownerText += `📞 Owner ${idx + 1}: ${num}\n`;
                 });
             } else {
-                ownerText += `📞 Owner: ${config.OWNER_NUMBER}\\n`;
+                ownerText += `📞 Owner: ${config.OWNER_NUMBER}\n`;
             }
         }
         
@@ -1369,17 +1344,17 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
     async statsCommand(context) {
         const { jid, sock, message } = context;
-        const statsText = '📊 *Bot Statistics*\\n\\n' +
-                         '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
-                         '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n' +
-                         '📦 Platform: ' + process.platform + '\\n' +
-                         '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\n' +
-                         '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\\n' +
-                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\\n' +
-                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\\n' +
-                         '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
-                         '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\\n' +
-                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\\n' +
+        const statsText = '📊 *Bot Statistics*\n\n' +
+                         '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n' +
+                         '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n' +
+                         '📦 Platform: ' + process.platform + '\n' +
+                         '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
+                         '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
+                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
+                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
+                         '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
+                         '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
+                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
                          '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected');
         
         await sock.sendMessage(jid, { text: statsText }, { quoted: message });
@@ -1388,13 +1363,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     async pluginsCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
-        let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
+        let pluginsText = '📦 *Loaded Plugins*\n\nTotal: ' + plugins.length + '\n\n';
         
         if (plugins.length === 0) {
-            pluginsText += 'No plugins loaded.\\nCheck silvaxlab folder.';
+            pluginsText += 'No plugins loaded.\nCheck silvaxlab folder.';
         } else {
             for (const plugin of plugins) {
-                pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\n';
+                pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\n';
             }
         }
         
@@ -1403,11 +1378,11 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
     async startCommand(context) {
         const { jid, sock, message } = context;
-        const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
-                         'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
-                         'Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                         'Prefix: ' + config.PREFIX + '\\n' +
-                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\\n\\n' +
+        const startText = '✨ *Welcome to Silva MD!*\n\n' +
+                         'I am an advanced WhatsApp bot with plugin support.\n\n' +
+                         'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                         'Prefix: ' + config.PREFIX + '\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
                          'Type ' + config.PREFIX + 'help for commands';
         
         await sock.sendMessage(jid, { 
@@ -1443,7 +1418,7 @@ module.exports = {
     bot,
     config,
     logger: botLogger,
-    functions: new Functions()
+    functions: new FunctionsWrapper()
 };
 
 // ==============================
