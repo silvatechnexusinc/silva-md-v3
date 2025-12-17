@@ -701,36 +701,46 @@ class SilvaBot {
                 
                 // Send connection message to owner
                 if (config.OWNER_NUMBER) {
-                    try {
-                        await delay(2000);
-                        
-                        const ownerNumbers = Array.isArray(config.OWNER_NUMBER) ? 
-                            config.OWNER_NUMBER : [config.OWNER_NUMBER];
-                        
-                        for (const ownerNum of ownerNumbers) {
-                            const ownerJid = this.functions.formatJid(ownerNum);
-                            if (ownerJid) {
-                                const now = new Date().toLocaleString();
-                                const messageText = `
+    try {
+        await delay(2000);
+
+        const ownerNumbers = Array.isArray(config.OWNER_NUMBER)
+            ? config.OWNER_NUMBER
+            : [config.OWNER_NUMBER];
+
+        for (const ownerNum of ownerNumbers) {
+            const ownerJid = this.functions.formatJid(ownerNum);
+            if (!ownerJid) continue;
+
+            const now = new Date().toLocaleString();
+
+            const messageText = `
 ✅ *${config.BOT_NAME} Connected!*
 Mode: ${config.BOT_MODE || 'public'}
 Time: ${now}
 Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
 Connected Number: ${this.functions.botNumber || 'Unknown'}
-                                `.trim();
-                                
-                                await this.sendMessage(ownerJid, {
-                                    text: messageText,
-                                    contextInfo: {
-                                        mentionedJid: [ownerJid],
-                                        forwardingScore: 999,
-                                         isForwarded: true,
-                                        forwardedNewsletterMessageInfo: {
-                                        newsletterJid: "120363200367779016@newsletter",
-                                        newsletterName: "SILVA WELCOMES YOU 💖🥰",
-                                         serverMessageId: 143
-                                    }
-                                });
+            `.trim();
+
+            await this.sendMessage(ownerJid, {
+                text: messageText,
+                contextInfo: {
+                    mentionedJid: [ownerJid],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "SILVA WELCOMES YOU 💖🥰",
+                        serverMessageId: 143
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        console.error('Failed to notify owner:', err);
+    }
+}
+
                             }
                         }
                         
