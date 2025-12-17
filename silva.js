@@ -1457,5 +1457,3 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
     botLogger.log('ERROR', `Unhandled Rejection at: ${promise}, reason: ${reason}`);
 });
-so remove those from silva.js and let them be imported 
-that will be easy to manage them
