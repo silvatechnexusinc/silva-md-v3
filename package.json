@@ -23,7 +23,7 @@
   "license": "MIT",
   "dependencies": {
     "@whiskeysockets/baileys": "v7.0.0-rc.9",
-    "@whiskeysockets/baileys-legacy": "npm:@fizzxydev/baileys-pro@^8.5.12",
+    "@whiskeysockets/baileys-legacy": "npm:baileys@6.7.21",
     "@hapi/boom": "^10.0.1",
     "qrcode-terminal": "^0.12.0",
     "acrcloud": "^1.4.0",
