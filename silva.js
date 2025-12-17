@@ -165,8 +165,11 @@ class Functions {
     }
 
     isAllowed(sender, jid) {
-        // Owner is always allowed
-        if (this.isOwner(sender)) return true;
+        // Owner is always allowed - THIS IS THE KEY FIX
+        if (this.isOwner(sender)) {
+            botLogger.log('INFO', 'Owner access granted for: ' + sender);
+            return true;
+        }
         
         if (config.BOT_MODE === 'public') return true;
         
@@ -501,10 +504,8 @@ module.exports = { handler };`;
     async executeCommand(context) {
         const { text, jid, sender, isGroup, message, sock, args } = context;
         
-        // Check if user is allowed - FIXED: Added more detailed logging
-        const allowed = this.functions.isAllowed(sender, jid);
-        if (!allowed) {
-            botLogger.log('INFO', `User ${sender} not allowed in ${jid}. Mode: ${config.BOT_MODE}`);
+        // Check if user is allowed - OWNER ALWAYS ALLOWED
+        if (!this.functions.isAllowed(sender, jid)) {
             if (config.BOT_MODE === 'private') {
                 await sock.sendMessage(jid, { 
                     text: '🔒 Private mode: Contact owner for access.' 
@@ -514,13 +515,14 @@ module.exports = { handler };`;
             return false;
         }
         
+        botLogger.log('INFO', `Command execution check for: ${text} from ${sender}`);
+        
         for (const [commandRegex, handler] of this.commandHandlers.entries()) {
             const commandMatch = text.split(' ')[0];
             if (commandRegex.test(commandMatch)) {
                 try {
-                    // Check permissions
+                    // Check permissions - OWNER BYPASSES ALL CHECKS
                     if (handler.owner && !this.functions.isOwner(sender)) {
-                        botLogger.log('INFO', `Owner only command attempted by: ${sender}`);
                         await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
                         return true;
                     }
@@ -553,7 +555,7 @@ module.exports = { handler };`;
                     }
                     
                     // Execute command
-                    botLogger.log('INFO', `Executing plugin command: ${commandMatch} for ${sender}`);
+                    botLogger.log('SUCCESS', `Executing plugin command: ${commandMatch} for ${sender}`);
                     await handler.execute(context);
                     return true;
                     
@@ -1008,7 +1010,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
         }
     }
 
-    // FIXED: Enhanced message handling with owner command fix
+    // Enhanced message handling - FIXED OWNER COMMAND ISSUE
     async handleMessages(m) {
         if (!m.messages || !Array.isArray(m.messages)) {
             return;
@@ -1034,9 +1036,10 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
                 const jid = message.key.remoteJid;
                 const sender = message.key.participant || jid;
                 const isGroup = jid.endsWith('@g.us');
+                const isOwner = this.functions.isOwner(sender);
                 
                 // Debug: Log who sent the message
-                if (this.functions.isOwner(sender)) {
+                if (isOwner) {
                     botLogger.log('INFO', 'Owner message detected from: ' + sender);
                 }
 
@@ -1061,14 +1064,14 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
 
                 // Check if message starts with prefix
                 if (text && text.startsWith(config.PREFIX)) {
-                    botLogger.log('INFO', 'Command detected: ' + text + ' from ' + sender);
+                    botLogger.log('INFO', `Command detected: ${text} from ${sender} (Owner: ${isOwner})`);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
                     // Stop typing indicator
                     await this.sock.sendPresenceUpdate('paused', jid);
                     
-                    // Try plugin commands first
+                    // Try plugin commands first - OWNER ALWAYS ALLOWED
                     const executed = await this.pluginManager.executeCommand({
                         text: cmdText,
                         jid,
@@ -1086,18 +1089,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
                         const command = args.shift().toLowerCase();
                         
                         if (this.commands[command]) {
-                            botLogger.log('INFO', 'Executing built-in command: ' + command + ' for sender: ' + sender);
-                            
-                            // Check if user is allowed (owner should always be allowed)
-                            if (!this.functions.isAllowed(sender, jid)) {
-                                if (config.BOT_MODE === 'private') {
-                                    await this.sock.sendMessage(jid, { 
-                                        text: '🔒 Private mode: Contact owner for access.' 
-                                    }, { quoted: message });
-                                }
-                                continue;
-                            }
-                            
+                            botLogger.log('INFO', `Executing built-in command: ${command} for ${sender} (Owner: ${isOwner})`);
                             await this.commands[command]({
                                 jid,
                                 sender,
@@ -1138,9 +1130,10 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     
     async antideleteCommand(context) {
         const { jid, sock, message, args, sender } = context;
+        const isOwner = this.functions.isOwner(sender);
         
         // Only allow in groups or private chats
-        if (!this.antiDeleteEnabled && !this.functions.isOwner(sender)) {
+        if (!this.antiDeleteEnabled && !isOwner) {
             await sock.sendMessage(jid, {
                 text: '⚠️ Anti-delete is disabled. Owner can enable it.'
             }, { quoted: message });
@@ -1153,8 +1146,8 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
                 text: '🚨 *Anti-Delete System*\\n\\n' +
                       `Status: ${status}\\n` +
                       `Stored Messages: ${this.recentDeletedMessages.length}\\n\\n` +
-                      `• \`${config.PREFIX}antidelete on\` - Enable\\n` +
-                      `• \`${config.PREFIX}antidelete off\` - Disable\\n` +
+                      `• \`${config.PREFIX}antidelete on\` - Enable (Owner only)\\n` +
+                      `• \`${config.PREFIX}antidelete off\` - Disable (Owner only)\\n` +
                       `• \`${config.PREFIX}antidelete list\` - Show recent\\n` +
                       `• \`${config.PREFIX}antidelete recover [num]\` - Recover message`
             }, { quoted: message });
@@ -1165,7 +1158,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
         
         switch(action) {
             case 'on':
-                if (!this.functions.isOwner(sender)) {
+                if (!isOwner) {
                     await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
                     return;
                 }
@@ -1176,7 +1169,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
                 break;
                 
             case 'off':
-                if (!this.functions.isOwner(sender)) {
+                if (!isOwner) {
                     await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
                     return;
                 }
@@ -1313,11 +1306,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async helpCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is requesting help
-        botLogger.log('INFO', `Help command requested by: ${sender}`);
-        
+        const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
         
         let helpText = '*Silva MD Help Menu*\n\n';
@@ -1350,11 +1339,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async menuCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is requesting menu
-        botLogger.log('INFO', `Menu command requested by: ${sender}`);
-        
+        const { jid, sock, message } = context;
         const menuText = '┌─「 *Silva MD* 」─\\n' +
                         '│\\n' +
                         '│ ⚡ *BOT STATUS*\\n' +
@@ -1385,11 +1370,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async pingCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is pinging
-        botLogger.log('INFO', `Ping command from: ${sender}`);
-        
+        const { jid, sock, message } = context;
         try {
             const start = Date.now();
             await sock.sendMessage(jid, { text: '🏓 Pong!' }, { quoted: message });
@@ -1404,11 +1385,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async ownerCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is requesting owner info
-        botLogger.log('INFO', `Owner command from: ${sender}`);
-        
+        const { jid, sock, message } = context;
         if (config.OWNER_NUMBER) {
             try {
                 let ownerText = '👑 *Bot Owner*\\n\\n';
@@ -1437,11 +1414,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async statsCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is requesting stats
-        botLogger.log('INFO', `Stats command from: ${sender}`);
-        
+        const { jid, sock, message } = context;
         try {
             const statsText = '📊 *Bot Statistics*\\n\\n' +
                              '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
@@ -1461,11 +1434,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async pluginsCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is requesting plugins list
-        botLogger.log('INFO', `Plugins command from: ${sender}`);
-        
+        const { jid, sock, message } = context;
         try {
             const plugins = this.pluginManager.getCommandList();
             let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
@@ -1485,11 +1454,7 @@ Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
     }
 
     async startCommand(context) {
-        const { jid, sock, message, sender } = context;
-        
-        // Log who is starting the bot
-        botLogger.log('INFO', `Start command from: ${sender}`);
-        
+        const { jid, sock, message } = context;
         try {
             const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
                              'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
