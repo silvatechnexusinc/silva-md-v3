@@ -119,7 +119,7 @@ async function loadSession() {
 }
 
 // ==============================
-// 🔧 UTILITY FUNCTIONS (UPDATED)
+// 🔧 UTILITY FUNCTIONS (FIXED FOR LID OWNER DETECTION)
 // ==============================
 class Functions {
     constructor() {
@@ -128,7 +128,7 @@ class Functions {
             fs.mkdirSync(this.tempDir, { recursive: true });
         }
         this.botNumber = null;
-        this.botJid = null;
+        this.botLid = null; // Store bot's LID
     }
 
     async isAdmin(message, sock) {
@@ -147,52 +147,78 @@ class Functions {
     isOwner(sender) {
         botLogger.log('DEBUG', `[OWNER CHECK] Checking if sender is owner: ${sender}`);
         
-        if (!config.OWNER_NUMBER && !this.botNumber) {
-            botLogger.log('DEBUG', '[OWNER CHECK] No owner number configured');
-            return false;
-        }
+        // First: If message is from the bot itself (fromMe), it's automatically owner
+        // We'll handle this in the message handler by checking fromMe flag
         
-        // Extract phone number from sender
+        // Extract phone number or LID from sender
         let phoneNumber = '';
+        let isLid = false;
         
         if (sender.includes('@lid')) {
+            // Handle LID format: 81712071631074@lid
             phoneNumber = sender.split('@')[0];
+            isLid = true;
+            botLogger.log('DEBUG', `[OWNER CHECK] Sender is LID: ${phoneNumber}`);
         } else if (sender.includes('@s.whatsapp.net')) {
+            // Handle standard JID format: 254700143167@s.whatsapp.net
             phoneNumber = sender.split('@')[0];
+            botLogger.log('DEBUG', `[OWNER CHECK] Sender is JID: ${phoneNumber}`);
         } else if (sender.includes(':')) {
+            // Handle other formats with colon
             phoneNumber = sender.split(':')[0];
         } else {
             phoneNumber = sender;
         }
         
-        // Clean the phone number
+        // Clean the phone number (remove non-digits)
         const cleanSender = phoneNumber.replace(/[^0-9]/g, '');
         botLogger.log('DEBUG', `[OWNER CHECK] Cleaned sender: ${cleanSender}`);
         
-        // First check: is this the bot's own number?
-        if (this.botNumber) {
-            const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
-            botLogger.log('DEBUG', `[OWNER CHECK] Bot number: ${cleanBotNum}`);
-            if (cleanSender === cleanBotNum) {
-                botLogger.log('DEBUG', '[OWNER CHECK] Sender is the bot itself - GRANTING OWNER');
+        // Check 1: Is this the bot's LID?
+        if (isLid && this.botLid) {
+            const cleanBotLid = this.botLid.replace(/[^0-9]/g, '');
+            if (cleanSender === cleanBotLid) {
+                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot LID - GRANTING OWNER');
                 return true;
             }
         }
         
-        // Second check: check against config owner numbers
+        // Check 2: Is this the bot's phone number?
+        if (this.botNumber) {
+            const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
+            botLogger.log('DEBUG', `[OWNER CHECK] Bot number: ${cleanBotNum}`);
+            if (cleanSender === cleanBotNum) {
+                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot number - GRANTING OWNER');
+                return true;
+            }
+        }
+        
+        // Check 3: Check against config owner numbers
         let ownerNumbers = [];
         if (config.OWNER_NUMBER) {
             if (Array.isArray(config.OWNER_NUMBER)) {
                 ownerNumbers = config.OWNER_NUMBER.map(num => {
                     const cleanNum = num.replace(/[^0-9]/g, '');
+                    botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${num} -> ${cleanNum}`);
                     return cleanNum;
                 });
             } else if (typeof config.OWNER_NUMBER === 'string') {
                 const cleanNum = config.OWNER_NUMBER.replace(/[^0-9]/g, '');
                 ownerNumbers = [cleanNum];
+                botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${config.OWNER_NUMBER} -> ${cleanNum}`);
             }
-            botLogger.log('DEBUG', `[OWNER CHECK] Config owner numbers: ${ownerNumbers.join(', ')}`);
         }
+        
+        // Check 4: Also check connected number from config
+        if (config.CONNECTED_NUMBER) {
+            const connectedNumber = config.CONNECTED_NUMBER.replace(/[^0-9]/g, '');
+            ownerNumbers.push(connectedNumber);
+            botLogger.log('DEBUG', `[OWNER CHECK] Connected number from config: ${connectedNumber}`);
+        }
+        
+        // Remove duplicates
+        ownerNumbers = [...new Set(ownerNumbers)];
+        botLogger.log('DEBUG', `[OWNER CHECK] All owner numbers to check: ${ownerNumbers.join(', ')}`);
         
         // Check if sender matches any owner number
         const isOwner = ownerNumbers.some(ownerNum => {
@@ -212,9 +238,30 @@ class Functions {
     setBotNumber(number) {
         if (number) {
             this.botNumber = number.replace(/[^0-9]/g, '');
-            this.botJid = this.botNumber + '@s.whatsapp.net';
             botLogger.log('INFO', `🤖 Bot connected as: ${this.botNumber}`);
-            botLogger.log('INFO', `📞 Bot JID: ${this.botJid}`);
+            
+            // Also store as owner if not already in config
+            if (config.OWNER_NUMBER) {
+                const ownerNumbers = Array.isArray(config.OWNER_NUMBER) ? 
+                    config.OWNER_NUMBER : [config.OWNER_NUMBER];
+                const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
+                
+                // Check if bot number is already in owner list
+                const isAlreadyOwner = ownerNumbers.some(ownerNum => 
+                    ownerNum.replace(/[^0-9]/g, '') === cleanBotNum
+                );
+                
+                if (!isAlreadyOwner) {
+                    botLogger.log('INFO', `✅ Added bot number ${this.botNumber} to owner list`);
+                }
+            }
+        }
+    }
+
+    setBotLid(lid) {
+        if (lid) {
+            this.botLid = lid.split('@')[0]; // Store just the number part
+            botLogger.log('INFO', `🔑 Bot LID detected: ${this.botLid}`);
         }
     }
 
@@ -418,10 +465,13 @@ class PluginManager {
             const commandMatch = text.split(' ')[0];
             if (commandRegex.test(commandMatch)) {
                 try {
-                    // Check permissions
+                    // Check permissions - SPECIAL HANDLING FOR FROM_ME MESSAGES
                     if (handler.owner && !this.functions.isOwner(sender)) {
-                        await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
-                        return true;
+                        // If message is from bot itself (fromMe), allow it
+                        if (!message.key.fromMe) {
+                            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                            return true;
+                        }
                     }
                     
                     if (handler.group && !isGroup) {
@@ -484,7 +534,7 @@ class PluginManager {
 }
 
 // ==============================
-// 🤖 MAIN BOT CLASS (FIXED FOR OWNER MESSAGES)
+// 🤖 MAIN BOT CLASS (FIXED FOR LID OWNER ISSUE)
 // ==============================
 class SilvaBot {
     constructor() {
@@ -526,6 +576,7 @@ class SilvaBot {
             botLogger.log('BOT', "🚀 Starting " + config.BOT_NAME + " v" + config.VERSION);
             botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
             botLogger.log('INFO', "Owner: " + (config.OWNER_NUMBER || 'Not configured'));
+            botLogger.log('INFO', "Prefix: " + config.PREFIX);
             
             if (config.SESSION_ID) {
                 await loadSession();
@@ -641,6 +692,9 @@ class SilvaBot {
                 if (sock.user && sock.user.id) {
                     const botNumber = sock.user.id.split(':')[0];
                     this.functions.setBotNumber(botNumber);
+                    
+                    // Try to detect bot's LID by sending a test message to itself
+                    this.detectBotLid();
                 }
                 
                 this.startKeepAlive();
@@ -740,10 +794,32 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 for (const msg of m.messages || []) {
                     if (msg.key.fromMe) {
                         botLogger.log('MESSAGE', `📤 Sent message to: ${msg.key.remoteJid}`);
+                        // If this is a message sent by the bot to itself, we can detect the LID
+                        if (msg.key.remoteJid.includes('@lid') && !this.functions.botLid) {
+                            const lid = msg.key.remoteJid.split('@')[0];
+                            this.functions.setBotLid(lid + '@lid');
+                        }
                     }
                 }
             }
         });
+    }
+
+    // Detect bot's LID by checking messages sent by the bot
+    async detectBotLid() {
+        try {
+            // Send a test message to ourselves to detect LID
+            if (this.functions.botNumber) {
+                const botJid = this.functions.botNumber + '@s.whatsapp.net';
+                await delay(1000);
+                await this.sock.sendMessage(botJid, {
+                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
+                });
+                botLogger.log('INFO', 'Test message sent to detect LID');
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
+        }
     }
 
     // Handle status messages
@@ -894,7 +970,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // FIXED: Handle owner messages correctly
+    // FIXED: Handle owner messages correctly with LID support
     async handleMessages(m) {
         if (!m.messages || !Array.isArray(m.messages)) {
             return;
@@ -919,7 +995,12 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 
                 // Log ALL messages
                 botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
-                botLogger.log('DEBUG', `Message key: ${JSON.stringify(message.key)}`);
+                
+                // If message is fromMe and we don't have bot LID yet, store it
+                if (isFromMe && sender.includes('@lid') && !this.functions.botLid) {
+                    const lid = sender.split('@')[0];
+                    this.functions.setBotLid(lid + '@lid');
+                }
 
                 // Extract text from message
                 let text = '';
@@ -945,9 +1026,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 if (text && text.startsWith(config.PREFIX)) {
                     botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
                     
-                    // Check if sender is owner
-                    const isOwner = this.functions.isOwner(sender);
-                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner}`);
+                    // SPECIAL FIX: If message is fromMe, automatically treat as owner
+                    const isOwner = isFromMe ? true : this.functions.isOwner(sender);
+                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
@@ -1004,12 +1085,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     }
 
     // ==============================
-    // 💬 COMMAND HANDLERS
+    // 💬 COMMAND HANDLERS (FIXED FOR FROM_ME MESSAGES)
     // ==============================
     
     async antideleteCommand(context) {
         const { jid, sock, message, args, sender } = context;
-        const isOwner = this.functions.isOwner(sender);
+        // FIX: If message is fromMe, treat as owner
+        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
         
         if (!args[0]) {
             const status = this.antiDeleteEnabled ? '✅ Enabled' : '❌ Disabled';
@@ -1113,7 +1195,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     
     async statusviewCommand(context) {
         const { jid, sock, message, args, sender } = context;
-        const isOwner = this.functions.isOwner(sender);
+        // FIX: If message is fromMe, treat as owner
+        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
         
         if (!isOwner) {
             await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
@@ -1237,7 +1320,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown')
+            text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
         }, { quoted: message });
     }
 
@@ -1247,6 +1330,10 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         
         if (this.functions.botNumber) {
             ownerText += `🤖 Connected Bot: ${this.functions.botNumber}\\n`;
+        }
+        
+        if (this.functions.botLid) {
+            ownerText += `🔑 Bot LID: ${this.functions.botLid}\\n`;
         }
         
         if (config.OWNER_NUMBER) {
@@ -1278,7 +1365,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\\n' +
                          '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
                          '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\\n' +
-                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown');
+                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\\n' +
+                         '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected');
         
         await sock.sendMessage(jid, { text: statsText }, { quoted: message });
     }
