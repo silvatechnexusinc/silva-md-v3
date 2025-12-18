@@ -1,88 +1,102 @@
-// ⏱️ Silva MD Runtime — No Spam, Just Facts
-// Built for Silva MD Framework
+// Modern Runtime / Uptime Command — Silva MD Framework
+const os = require('os');
+const { performance } = require('perf_hooks');
 
-const { cpus } = require('os')
-const { performance } = require('perf_hooks')
+const handler = {
+    help: ['runtime', 'uptime'],
+    tags: ['info', 'system'],
+    command: /^(runtime|uptime)$/i,
+    group: false,
+    admin: false,
+    botAdmin: false,
+    owner: false,
 
-module.exports = {
-  command: ['runtime', 'uptime'],
-  alias: ['up'],
-  react: '⏱️',
-  desc: 'Check bot uptime & system health',
-  category: 'info',
+    execute: async ({ jid, sock, message }) => {
+        try {
+            const sender = message.key.participant || message.key.remoteJid;
 
-  async execute(sock, msg) {
-    try {
-      let _muptime = 0
+            // Get uptime safely
+            let botUptime = process.uptime() * 1000;
 
-      if (process.send) {
-        process.send('uptime')
-        _muptime = await new Promise(resolve => {
-          process.once('message', resolve)
-          setTimeout(resolve, 1000)
-        }) * 1000
-      }
+            // Measure latency
+            const start = performance.now();
+            const end = performance.now();
+            const latency = (end - start).toFixed(2);
 
-      const start = performance.now()
+            // CPU info
+            const cpus = os.cpus();
+            const cpu = cpus[0];
+            const cores = cpus.length;
+            const cpuModel = cpu.model.replace(/\s+/g, ' ').trim();
 
-      const end = performance.now()
-      const latency = (end - start).toFixed(2)
+            // Memory
+            const usedMem = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+            const totalMem = (os.totalmem() / 1024 / 1024).toFixed(2);
 
-      const cpu = cpus()[0]
-      const cores = cpus().length
-      const cpuModel = cpu.model.replace(/\s+/g, ' ').trim()
-      const uptime = clockString(_muptime)
+            const uptimeText = formatUptime(botUptime);
 
-      const text = `
+            const text = `
 🧠 *SILVA MD — SYSTEM STATUS*
 
 ⏳ *Uptime*
-${uptime}
+${uptimeText}
 
 ⚡ *Latency:* ${latency} ms
 🖥️ *CPU:* ${cpuModel}
 🔩 *Cores:* ${cores}
-🚀 *Speed:* ${cpu.speed} MHz
+💾 *RAM:* ${usedMem} / ${totalMem} MB
 
-😌 Alive. Awake. Unbothered.
-`.trim()
+😎 Still standing. No coffee needed.
+`.trim();
 
-      await sock.sendMessage(
-        msg.key.remoteJid,
-        {
-          text,
-          contextInfo: {
-            mentionedJid: [msg.key.participant || msg.key.remoteJid],
-            forwardingScore: 777,
-            isForwarded: true,
-            forwardedNewsletterMessageInfo: {
-              newsletterJid: '120363200367779016@newsletter',
-              newsletterName: 'SILVA MD SYSTEM CORE 🧠',
-              serverMessageId: 143
-            }
-          }
-        },
-        { quoted: msg }
-      )
+            await sock.sendMessage(jid, {
+                text,
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    externalAdReply: {
+                        title: "SILVA MD SYSTEM CORE",
+                        body: "Pure WhatsApp Tech Vibe ⚙️",
+                        sourceUrl: "https://silvatech.top",
+                        showAdAttribution: true,
+                        thumbnailUrl: "https://i.imgur.com/8hQvY5j.png"
+                    },
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "SILVA MD RUNTIME ⏱️",
+                        serverMessageId: 143
+                    }
+                }
+            }, { quoted: message });
 
-    } catch (err) {
-      console.error('Runtime Error:', err)
-      await sock.sendMessage(
-        msg.key.remoteJid,
-        { text: '⚠️ Runtime monitor tripped. Still alive though 😅' },
-        { quoted: msg }
-      )
+        } catch (err) {
+            await sock.sendMessage(jid, {
+                text: `❌ *Runtime Error*\n${err.message}`,
+                contextInfo: {
+                    mentionedJid: [message.key.participant || message.key.remoteJid],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "SILVA MD ERROR 💥",
+                        serverMessageId: 143
+                    }
+                }
+            }, { quoted: message });
+        }
     }
-  }
-}
+};
+
+module.exports = { handler };
 
 // ────────────────
 // Helpers
 // ────────────────
-function clockString(ms) {
-  let d = isNaN(ms) ? '--' : Math.floor(ms / 86400000)
-  let h = isNaN(ms) ? '--' : Math.floor(ms / 3600000) % 24
-  let m = isNaN(ms) ? '--' : Math.floor(ms / 60000) % 60
-  let s = isNaN(ms) ? '--' : Math.floor(ms / 1000) % 60
-  return `🗓️ ${d}d ${h}h ${m}m ${s}s`
+function formatUptime(ms) {
+    let d = Math.floor(ms / 86400000);
+    let h = Math.floor(ms / 3600000) % 24;
+    let m = Math.floor(ms / 60000) % 60;
+    let s = Math.floor(ms / 1000) % 60;
+    return `🗓️ ${d}d ${h}h ${m}m ${s}s`;
 }
