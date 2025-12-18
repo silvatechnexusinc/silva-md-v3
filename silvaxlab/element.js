@@ -1,116 +1,110 @@
-import fetch from 'node-fetch'
+// Silva MD — Periodic Table Plugin 🧪
+const fetch = require('node-fetch');
 
 const handler = {
-  help: ['element', 'ele'],
-  tags: ['tools'],
-  command: /^(element|ele)$/i,
-  group: false,
-  admin: false,
-  botAdmin: false,
-  owner: false,
+    help: ['element', 'ele'],
+    tags: ['tools', 'education'],
+    command: /^(element|ele)$/i,
+    group: false,
+    admin: false,
+    botAdmin: false,
+    owner: false,
 
-  execute: async ({ jid, sock, message, args }) => {
-    try {
-      const text = args.join(' ')
+    execute: async ({ jid, sock, message, args }) => {
+        try {
+            const sender = message.key.participant || message.key.remoteJid;
+            const query = args.join(' ');
 
-      if (!text) {
-        return sock.sendMessage(
-          jid,
-          {
-            text: `🧠 *Chemistry check!*\n\nYou forgot to tell me *which element* 😭\n\nExample:\n• *.element oxygen*\n• *.ele O*`
-          },
-          { quoted: message }
-        )
-      }
+            if (!query) {
+                return await sock.sendMessage(jid, {
+                    text: `🧠 *Silva MD Chemistry Desk*\n\nBro… give me an element 😭\n\nExample:\n• .element oxygen\n• .ele Fe`,
+                    contextInfo: {
+                        mentionedJid: [sender]
+                    }
+                }, { quoted: message });
+            }
 
-      // 🔬 React like a nerd
-      await sock.sendMessage(jid, {
-        react: { text: '🧪', key: message.key }
-      })
+            const url = `https://api.popcat.xyz/periodic-table?element=${encodeURIComponent(query)}`;
+            const res = await fetch(url);
 
-      const url = `https://api.popcat.xyz/periodic-table?element=${encodeURIComponent(text)}`
-      const res = await fetch(url)
+            if (!res.ok) {
+                throw new Error(`API slept in chemistry class (${res.status})`);
+            }
 
-      if (!res.ok) {
-        throw new Error(`API exploded with status ${res.status}`)
-      }
+            const data = await res.json();
 
-      const data = await res.json()
+            if (!data?.name) {
+                return await sock.sendMessage(jid, {
+                    text: `😂 *Chemistry Alert!*\n\n"${query}" is NOT on the periodic table.\nDid you just invent a new element?`,
+                    contextInfo: {
+                        mentionedJid: [sender]
+                    }
+                }, { quoted: message });
+            }
 
-      // 🧨 Invalid element
-      if (!data?.name) {
-        return sock.sendMessage(
-          jid,
-          {
-            text: `🤨 *${text}* is not an element.\n\nDid you skip chemistry or invent a new substance? 😂`
-          },
-          { quoted: message }
-        )
-      }
+            // Light typo check
+            const input = query.toLowerCase();
+            if (
+                input !== data.name.toLowerCase() &&
+                input !== data.symbol.toLowerCase()
+            ) {
+                return await sock.sendMessage(jid, {
+                    text: `🤔 *Close enough…*\n\nDid you mean *${data.name}* (${data.symbol})?\nTry again before I explode like sodium in water 💥`,
+                    contextInfo: {
+                        mentionedJid: [sender]
+                    }
+                }, { quoted: message });
+            }
 
-      const userInput = text.toLowerCase()
-      const name = data.name.toLowerCase()
-      const symbol = data.symbol.toLowerCase()
+            const caption = `
+🧪 *SILVA MD — ELEMENT FILE*
 
-      // 🤔 Close but not exact
-      if (userInput !== name && userInput !== symbol) {
-        return sock.sendMessage(
-          jid,
-          {
-            text: `😏 I see what you tried there.\n\nDid you mean *${data.name}* (${data.symbol})?`
-          },
-          { quoted: message }
-        )
-      }
-
-      // 🧾 Fancy info card
-      const caption = `
-🧬 *SILVA MD – ELEMENT FILE*
-
-🧪 *Name:* ${data.name}
+🔬 *Name:* ${data.name}
 🔤 *Symbol:* ${data.symbol}
-🔢 *Atomic Number:* ${data.atomic_number}
+🔢 *Atomic No:* ${data.atomic_number}
 ⚖️ *Atomic Mass:* ${data.atomic_mass}
-📍 *Period:* ${data.period}
+📊 *Period:* ${data.period}
 🌡️ *Phase:* ${data.phase}
-🧠 *Discovered By:* ${data.discovered_by || 'Ancient nerds'}
-📖 *Summary:*
+👨‍🔬 *Discovered By:* ${data.discovered_by || 'Ancient nerds'}
+
+📚 *Summary:*
 ${data.summary}
 
-💡 Fun fact: This element did NOT choose to exist.
-      `.trim()
+😌 Science without explosions (today).
+`.trim();
 
-      await sock.sendMessage(
-        jid,
-        {
-          image: { url: data.image },
-          caption,
-          contextInfo: {
-            forwardingScore: 777,
-            isForwarded: true,
-            externalAdReply: {
-              title: 'Silva MD Chemistry Lab 🧪',
-              body: `${data.name} (${data.symbol})`,
-              thumbnailUrl: data.image,
-              mediaType: 1,
-              renderLargerThumbnail: true
-            }
-          }
-        },
-        { quoted: message }
-      )
+            await sock.sendMessage(jid, {
+                image: { url: data.image },
+                caption,
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    externalAdReply: {
+                        title: "SILVA MD SCIENCE LAB 🧪",
+                        body: "Periodic Table, but make it WhatsApp",
+                        sourceUrl: "https://silvatech.top",
+                        showAdAttribution: true,
+                        thumbnailUrl: data.image
+                    },
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "SILVA MD ELEMENTS ⚛️",
+                        serverMessageId: 143
+                    }
+                }
+            }, { quoted: message });
 
-    } catch (err) {
-      console.error('Element Plugin Error:', err)
-      await sock.sendMessage(
-        jid,
-        {
-          text: `💥 *Lab accident!*\n\nSomething went wrong while fetching element data.\n\n🛠 Error: ${err.message}`
-        },
-        { quoted: message }
-      )
+        } catch (err) {
+            console.error('Element Plugin Error:', err);
+            await sock.sendMessage(jid, {
+                text: `❌ *Lab Accident!*\n\nSomething went wrong while fetching element data.\n\n🧯 Error: ${err.message}`,
+                contextInfo: {
+                    mentionedJid: [message.key.participant || message.key.remoteJid]
+                }
+            }, { quoted: message });
+        }
     }
-  }
-}
+};
 
-export default handler
+module.exports = { handler };
