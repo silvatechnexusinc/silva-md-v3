@@ -1,4 +1,6 @@
 // Modern JID Fetch command
+const { decodeJid } = require('@whiskeysockets/baileys');
+
 const handler = {
     help: ['fetchjid <group/channel link>'],
     tags: ['utilities'],
@@ -18,72 +20,37 @@ const handler = {
                     contextInfo: {
                         mentionedJid: [sender],
                         forwardingScore: 999,
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: "120363200367779016@newsletter",
-                            newsletterName: "SILVA TECH JID FETCH 💻",
-                            serverMessageId: 201
-                        }
+                        isForwarded: true
                     }
                 }, { quoted: message });
             }
 
-            const link = args[0];
-            const codeMatch = link.match(/chat\.whatsapp\.com\/([0-9A-Za-z]+)/i);
-            if (!codeMatch) {
+            const link = args[0].trim();
+
+            // Check link type and extract code
+            const groupMatch = link.match(/chat\.whatsapp\.com\/([0-9A-Za-z]+)/i);
+            const channelMatch = link.match(/whatsapp\.com\/channel\/([0-9A-Za-z]+)/i);
+
+            let fetchedJid;
+
+            if (groupMatch) {
+                const inviteCode = groupMatch[1];
+                const info = await sock.groupInviteInfo(inviteCode);
+                fetchedJid = info.id; // already @g.us
+            } else if (channelMatch) {
+                const inviteCode = channelMatch[1];
+                const info = await sock.groupInviteInfo(inviteCode); // channels also work with this
+                fetchedJid = info.id.replace(/@c\.us$/, '@newsletter'); // convert to newsletter
+            } else {
                 return await sock.sendMessage(jid, {
                     text: '❌ Invalid group or channel link.',
                     contextInfo: {
                         mentionedJid: [sender],
                         forwardingScore: 999,
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: "120363200367779016@newsletter",
-                            newsletterName: "SILVA TECH JID FETCH 💻",
-                            serverMessageId: 202
-                        }
+                        isForwarded: true
                     }
                 }, { quoted: message });
             }
-
-            const inviteCode = codeMatch[1];
-
-            // Fetch invite info
-            const inviteInfo = await sock.query({
-                tag: 'iq',
-                attrs: {
-                    to: 's.whatsapp.net',
-                    type: 'get',
-                    xmlns: 'w:g2',
-                    id: 'jidfetch1'
-                },
-                content: [{
-                    tag: 'invite',
-                    attrs: { code: inviteCode }
-                }]
-            }).catch(() => null);
-
-            if (!inviteInfo || !inviteInfo.content || !inviteInfo.content[0]?.attrs) {
-                return await sock.sendMessage(jid, {
-                    text: '❌ Could not fetch JID. The link may be invalid or expired.',
-                    contextInfo: {
-                        mentionedJid: [sender],
-                        forwardingScore: 999,
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: "120363200367779016@newsletter",
-                            newsletterName: "SILVA TECH JID FETCH 💻",
-                            serverMessageId: 203
-                        }
-                    }
-                }, { quoted: message });
-            }
-
-            // Determine type and build correct JID
-            const isChannel = inviteInfo.content[0].attrs?.expiration; // channels have expiration field
-            const fetchedJid = isChannel 
-                ? `${inviteCode}@newsletter` 
-                : `${inviteCode}@g.us`;
 
             await sock.sendMessage(jid, {
                 text: `✅ *JID fetched successfully!*\n\n${fetchedJid}`,
@@ -97,11 +64,6 @@ const handler = {
                         sourceUrl: link,
                         showAdAttribution: true,
                         thumbnailUrl: "https://i.imgur.com/8hQvY5j.png"
-                    },
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "SILVA TECH JID FETCH 💻",
-                        serverMessageId: 204
                     }
                 }
             }, { quoted: message });
@@ -112,12 +74,7 @@ const handler = {
                 contextInfo: {
                     mentionedJid: [message.key.participant || message.key.remoteJid],
                     forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "SILVA TECH ERROR 💥",
-                        serverMessageId: 205
-                    }
+                    isForwarded: true
                 }
             }, { quoted: message });
         }
