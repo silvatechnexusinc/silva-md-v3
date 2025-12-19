@@ -560,7 +560,7 @@ class SilvaBot {
                         return false;
                     }
                     // Fixed: Properly check for status and newsletter
-                    if (jid ==='@newsletter')) {
+                    if (jid ==='@newsletter') {
                         return true;
                     }
                     return false;
