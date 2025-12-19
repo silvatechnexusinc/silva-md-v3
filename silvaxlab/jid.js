@@ -22,14 +22,14 @@ const handler = {
                         forwardedNewsletterMessageInfo: {
                             newsletterJid: "120363200367779016@newsletter",
                             newsletterName: "SILVA TECH JID FETCH 💻",
-                            serverMessageId: 101
+                            serverMessageId: 201
                         }
                     }
                 }, { quoted: message });
             }
 
             const link = args[0];
-            const codeMatch = link.match(/(https?:\/\/chat\.whatsapp\.com\/([0-9A-Za-z]+))/);
+            const codeMatch = link.match(/chat\.whatsapp\.com\/([0-9A-Za-z]+)/i);
             if (!codeMatch) {
                 return await sock.sendMessage(jid, {
                     text: '❌ Invalid group or channel link.',
@@ -40,18 +40,30 @@ const handler = {
                         forwardedNewsletterMessageInfo: {
                             newsletterJid: "120363200367779016@newsletter",
                             newsletterName: "SILVA TECH JID FETCH 💻",
-                            serverMessageId: 102
+                            serverMessageId: 202
                         }
                     }
                 }, { quoted: message });
             }
 
-            const inviteCode = codeMatch[2];
+            const inviteCode = codeMatch[1];
 
-            // Fetch group info using the invite code
-            const groupInfo = await sock.groupInviteCode(inviteCode).catch(() => null);
+            // Fetch invite info
+            const inviteInfo = await sock.query({
+                tag: 'iq',
+                attrs: {
+                    to: 's.whatsapp.net',
+                    type: 'get',
+                    xmlns: 'w:g2',
+                    id: 'jidfetch1'
+                },
+                content: [{
+                    tag: 'invite',
+                    attrs: { code: inviteCode }
+                }]
+            }).catch(() => null);
 
-            if (!groupInfo) {
+            if (!inviteInfo || !inviteInfo.content || !inviteInfo.content[0]?.attrs) {
                 return await sock.sendMessage(jid, {
                     text: '❌ Could not fetch JID. The link may be invalid or expired.',
                     contextInfo: {
@@ -61,16 +73,20 @@ const handler = {
                         forwardedNewsletterMessageInfo: {
                             newsletterJid: "120363200367779016@newsletter",
                             newsletterName: "SILVA TECH JID FETCH 💻",
-                            serverMessageId: 103
+                            serverMessageId: 203
                         }
                     }
                 }, { quoted: message });
             }
 
-            const groupJid = groupInfo.id; // WhatsApp returns the JID
+            // Determine type and build correct JID
+            const isChannel = inviteInfo.content[0].attrs?.expiration; // channels have expiration field
+            const fetchedJid = isChannel 
+                ? `${inviteCode}@newsletter` 
+                : `${inviteCode}@g.us`;
 
             await sock.sendMessage(jid, {
-                text: `✅ *JID fetched successfully!*\n\n${groupJid}`,
+                text: `✅ *JID fetched successfully!*\n\n${fetchedJid}`,
                 contextInfo: {
                     mentionedJid: [sender],
                     forwardingScore: 999,
@@ -85,7 +101,7 @@ const handler = {
                     forwardedNewsletterMessageInfo: {
                         newsletterJid: "120363200367779016@newsletter",
                         newsletterName: "SILVA TECH JID FETCH 💻",
-                        serverMessageId: 104
+                        serverMessageId: 204
                     }
                 }
             }, { quoted: message });
@@ -100,7 +116,7 @@ const handler = {
                     forwardedNewsletterMessageInfo: {
                         newsletterJid: "120363200367779016@newsletter",
                         newsletterName: "SILVA TECH ERROR 💥",
-                        serverMessageId: 105
+                        serverMessageId: 205
                     }
                 }
             }, { quoted: message });
