@@ -1,5 +1,5 @@
 // Modern JID Fetch command
-const { decodeJid } = require('@whiskeysockets/baileys');
+const { generateMessageID, jidDecode } = require('@whiskeysockets/baileys');
 
 const handler = {
     help: ['fetchjid <group/channel link>'],
@@ -11,71 +11,69 @@ const handler = {
     owner: false,
 
     execute: async ({ jid, sock, message, args }) => {
+        const sender = message.key.participant || message.key.remoteJid;
+
+        if (!args || !args[0]) {
+            return await sock.sendMessage(jid, {
+                text: '⚠️ Please provide a WhatsApp group or channel invite link.',
+                contextInfo: { mentionedJid: [sender] }
+            }, { quoted: message });
+        }
+
+        const link = args[0].trim();
+        let fetchedJid;
+
         try {
-            const sender = message.key.participant || message.key.remoteJid;
-
-            if (!args || args.length === 0) {
-                return await sock.sendMessage(jid, {
-                    text: '⚠️ Please provide a WhatsApp group or channel invite link.',
-                    contextInfo: {
-                        mentionedJid: [sender],
-                        forwardingScore: 999,
-                        isForwarded: true
-                    }
-                }, { quoted: message });
-            }
-
-            const link = args[0].trim();
-
-            // Check link type and extract code
-            const groupMatch = link.match(/chat\.whatsapp\.com\/([0-9A-Za-z]+)/i);
-            const channelMatch = link.match(/whatsapp\.com\/channel\/([0-9A-Za-z]+)/i);
-
-            let fetchedJid;
-
-            if (groupMatch) {
-                const inviteCode = groupMatch[1];
-                const info = await sock.groupInviteInfo(inviteCode);
-                fetchedJid = info.id; // already @g.us
-            } else if (channelMatch) {
-                const inviteCode = channelMatch[1];
-                const info = await sock.groupInviteInfo(inviteCode); // channels also work with this
-                fetchedJid = info.id.replace(/@c\.us$/, '@newsletter'); // convert to newsletter
+            if (link.match(/chat\.whatsapp\.com\/([0-9A-Za-z]+)/i)) {
+                // Group link
+                const code = link.split('/').pop();
+                const info = await sock.query({
+                    tag: 'iq',
+                    attrs: {
+                        to: 's.whatsapp.net',
+                        type: 'get',
+                        xmlns: 'w:g2'
+                    },
+                    content: [{
+                        tag: 'invite',
+                        attrs: { code }
+                    }]
+                });
+                const jidAttr = info.content[0].attrs.id;
+                fetchedJid = jidAttr.endsWith('@g.us') ? jidAttr : `${jidAttr}@g.us`;
+            } else if (link.match(/whatsapp\.com\/channel\/([0-9A-Za-z]+)/i)) {
+                // Channel link
+                const code = link.split('/').pop();
+                const info = await sock.query({
+                    tag: 'iq',
+                    attrs: {
+                        to: 's.whatsapp.net',
+                        type: 'get',
+                        xmlns: 'w:g2'
+                    },
+                    content: [{
+                        tag: 'invite',
+                        attrs: { code }
+                    }]
+                });
+                const jidAttr = info.content[0].attrs.id;
+                fetchedJid = jidAttr.replace(/@c\.us$/, '@newsletter');
             } else {
                 return await sock.sendMessage(jid, {
                     text: '❌ Invalid group or channel link.',
-                    contextInfo: {
-                        mentionedJid: [sender],
-                        forwardingScore: 999,
-                        isForwarded: true
-                    }
+                    contextInfo: { mentionedJid: [sender] }
                 }, { quoted: message });
             }
 
             await sock.sendMessage(jid, {
                 text: `✅ *JID fetched successfully!*\n\n${fetchedJid}`,
-                contextInfo: {
-                    mentionedJid: [sender],
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    externalAdReply: {
-                        title: "SILVA TECH BOT",
-                        body: "Use this JID in your commands ⚡",
-                        sourceUrl: link,
-                        showAdAttribution: true,
-                        thumbnailUrl: "https://i.imgur.com/8hQvY5j.png"
-                    }
-                }
+                contextInfo: { mentionedJid: [sender] }
             }, { quoted: message });
 
         } catch (err) {
             await sock.sendMessage(jid, {
                 text: `❌ *Error fetching JID:*\n${err.message}`,
-                contextInfo: {
-                    mentionedJid: [message.key.participant || message.key.remoteJid],
-                    forwardingScore: 999,
-                    isForwarded: true
-                }
+                contextInfo: { mentionedJid: [sender] }
             }, { quoted: message });
         }
     }
