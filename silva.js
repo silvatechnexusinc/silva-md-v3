@@ -356,22 +356,22 @@ const handler = {
     owner: false,
     
     execute: async ({ jid, sock, message }) => {
-        const menuText = '┌─「 *SILVA MD* 」─\\n' +
-                        '│\\n' +
-                        '│ ⚡ *BOT STATUS*\\n' +
-                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                        '│ • Prefix: ' + config.PREFIX + '\\n' +
-                        '│ • Version: ' + config.VERSION + '\\n' +
-                        '│\\n' +
-                        '│ 📋 *AVAILABLE COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
-                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
-                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
-                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
-                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
-                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
-                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
-                        '│\\n' +
+        const menuText = '┌─「 *SILVA MD* 」─\\\\n' +
+                        '│\\\\n' +
+                        '│ ⚡ *BOT STATUS*\\\\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\\\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\\\\n' +
+                        '│ • Version: ' + config.VERSION + '\\\\n' +
+                        '│\\\\n' +
+                        '│ 📋 *AVAILABLE COMMANDS*\\\\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\\\\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\\\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\\\\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\\\\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\\\\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\\\\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\\\n' +
+                        '│\\\\n' +
                         '│ └─「 *SILVA TECH* 」';
         
         await sock.sendMessage(jid, { text: menuText }, { quoted: message });
@@ -554,22 +554,36 @@ class SilvaBot {
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
-                // FIXED: shouldIgnoreJid function
+                // FIXED: shouldIgnoreJid function to properly ignore status updates
                 shouldIgnoreJid: (jid) => {
                     if (!jid || typeof jid !== 'string') {
                         return false;
                     }
                     // Fixed: Properly check for status and newsletter
-                    if (jid ==='@newsletter') {
+                    if (jid.includes('@broadcast') || jid.includes('status@broadcast')) {
+                        return true; // Ignore status updates
+                    }
+                    if (jid.includes('@newsletter')) {
                         return true;
                     }
                     return false;
                 },
-                // Message retrieval
+                // FIXED: Added shouldIgnoreHistorySyncNotification
+                shouldIgnoreHistorySyncNotification: (message) => {
+                    // Ignore history sync from status
+                    return message.key.remoteJid?.includes('@broadcast');
+                },
+                // FIXED: Added shouldSyncHistoryMessage
+                shouldSyncHistoryMessage: (message) => {
+                    // Don't sync status updates
+                    return !message.key.remoteJid?.includes('@broadcast');
+                },
+                // FIXED: Message retrieval with error handling
                 getMessage: async (key) => {
                     try {
                         return await this.store.getMessage(key);
                     } catch (error) {
+                        botLogger.log('WARNING', `Failed to get message ${key?.id}: ${error.message}`);
                         return null;
                     }
                 },
@@ -666,9 +680,32 @@ Time: ${now}
 
         sock.ev.on('creds.update', saveCreds);
 
+        // FIXED: Messages handling with better error handling
         sock.ev.on('messages.upsert', async (m) => {
             try {
-                await this.handleMessages(m);
+                // Skip if no messages
+                if (!m.messages || !Array.isArray(m.messages)) {
+                    return;
+                }
+
+                // Filter out status updates immediately
+                const filteredMessages = m.messages.filter(msg => {
+                    // Skip status broadcasts
+                    if (msg.key?.remoteJid?.includes('@broadcast')) {
+                        return false;
+                    }
+                    // Skip newsletter messages
+                    if (msg.key?.remoteJid?.includes('@newsletter')) {
+                        return false;
+                    }
+                    return true;
+                });
+
+                if (filteredMessages.length === 0) {
+                    return;
+                }
+
+                await this.handleMessages({ messages: filteredMessages, type: m.type });
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
@@ -701,31 +738,15 @@ Time: ${now}
             }
         });
 
-        // Handle presence updates
-        sock.ev.on('presence.update', (update) => {
-            // Presence updates for typing indicators
-        });
-
-        // FIXED: Add status update listener
-        sock.ev.on('status.update', async (update) => {
-            try {
-                if (config.AUTO_STATUS_VIEW || config.AUTO_STATUS_LIKE) {
-                    const { jid, status } = update;
-                    
-                    // Auto view status
-                    if (config.AUTO_STATUS_VIEW) {
-                        await sock.readMessages([{ key: { remoteJid: jid, id: 'status' } }]);
-                    }
-                    
-                    // Auto like status (if implemented)
-                    if (config.AUTO_STATUS_LIKE) {
-                        // Status like functionality would go here
-                    }
-                }
-            } catch (error) {
-                botLogger.log('ERROR', 'Status update error: ' + error.message);
+        // FIXED: Add error event listener
+        sock.ev.on('connection.update', (update) => {
+            if (update.error) {
+                botLogger.log('ERROR', 'Connection error: ' + update.error.message);
             }
         });
+
+        // FIXED: Remove status.update listener to prevent decryption errors
+        // Status updates often cause "No session found" errors
     }
 
     startKeepAlive() {
@@ -769,42 +790,47 @@ Time: ${now}
         
         for (const message of m.messages) {
             try {
-                // Skip status broadcasts and newsletter messages
-                if (message.key.remoteJid === '@newsletter' || 
-                    message.key.remoteJid.includes('@broadcast')) {
-                    continue;
-                }
-
                 // Skip messages from the bot itself
                 if (message.key.fromMe) {
                     continue;
                 }
 
-                // Store message
-                await this.store.setMessage(message.key, message);
+                // Store message with error handling
+                try {
+                    await this.store.setMessage(message.key, message);
+                } catch (storeError) {
+                    botLogger.log('WARNING', 'Failed to store message: ' + storeError.message);
+                }
 
                 const jid = message.key.remoteJid;
                 const sender = message.key.participant || jid;
                 const isGroup = jid.endsWith('@g.us');
                 
                 // Send typing indicator
-                await this.sock.sendPresenceUpdate('recording', jid);
+                try {
+                    await this.sock.sendPresenceUpdate('recording', jid);
+                } catch (presenceError) {
+                    // Ignore presence errors
+                }
 
-                // Extract text from message
+                // Extract text from message with better error handling
                 let text = '';
-                if (message.message?.conversation) {
-                    text = message.message.conversation;
-                } else if (message.message?.extendedTextMessage?.text) {
-                    text = message.message.extendedTextMessage.text;
-                } else if (message.message?.imageMessage?.caption) {
-                    text = message.message.imageMessage.caption;
-                } else if (message.message?.videoMessage?.caption) {
-                    text = message.message.videoMessage.caption;
-                } else if (message.message?.documentMessage?.caption) {
-                    text = message.message.documentMessage.caption;
-                } else if (message.message?.audioMessage) {
-                    // Handle audio messages
-                    text = message.message.audioMessage?.caption || '';
+                try {
+                    if (message.message?.conversation) {
+                        text = message.message.conversation;
+                    } else if (message.message?.extendedTextMessage?.text) {
+                        text = message.message.extendedTextMessage.text;
+                    } else if (message.message?.imageMessage?.caption) {
+                        text = message.message.imageMessage.caption;
+                    } else if (message.message?.videoMessage?.caption) {
+                        text = message.message.videoMessage.caption;
+                    } else if (message.message?.documentMessage?.caption) {
+                        text = message.message.documentMessage.caption;
+                    } else if (message.message?.audioMessage?.caption) {
+                        text = message.message.audioMessage.caption;
+                    }
+                } catch (extractError) {
+                    botLogger.log('WARNING', 'Failed to extract text: ' + extractError.message);
                 }
 
                 // Check if message starts with prefix
@@ -814,7 +840,11 @@ Time: ${now}
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
                     // Stop typing indicator
-                    await this.sock.sendPresenceUpdate('paused', jid);
+                    try {
+                        await this.sock.sendPresenceUpdate('paused', jid);
+                    } catch (presenceError) {
+                        // Ignore
+                    }
                     
                     // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
@@ -854,7 +884,11 @@ Time: ${now}
                     }
                 } else {
                     // Stop typing indicator for non-commands
-                    await this.sock.sendPresenceUpdate('paused', jid);
+                    try {
+                        await this.sock.sendPresenceUpdate('paused', jid);
+                    } catch (presenceError) {
+                        // Ignore
+                    }
                 }
 
             } catch (error) {
@@ -876,25 +910,25 @@ Time: ${now}
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
         
-        let helpText = '*Silva MD Help Menu*\n\n';
-        helpText += 'Prefix: ' + config.PREFIX + '\n';
-        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\n\n';
-        helpText += '*Built-in Commands:*\n';
-        helpText += '• ' + config.PREFIX + 'help - This menu\n';
-        helpText += '• ' + config.PREFIX + 'menu - Main menu\n';
-        helpText += '• ' + config.PREFIX + 'ping - Check status\n';
-        helpText += '• ' + config.PREFIX + 'owner - Owner info\n';
-        helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
-        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
+        let helpText = '*Silva MD Help Menu*\\n\\n';
+        helpText += 'Prefix: ' + config.PREFIX + '\\n';
+        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\\n\\n';
+        helpText += '*Built-in Commands:*\\n';
+        helpText += '• ' + config.PREFIX + 'help - This menu\\n';
+        helpText += '• ' + config.PREFIX + 'menu - Main menu\\n';
+        helpText += '• ' + config.PREFIX + 'ping - Check status\\n';
+        helpText += '• ' + config.PREFIX + 'owner - Owner info\\n';
+        helpText += '• ' + config.PREFIX + 'plugins - List plugins\\n';
+        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\\n';
         
         if (plugins.length > 0) {
             helpText += '\\n*Loaded Plugins:*\\n';
             for (const cmd of plugins) {
-                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\n';
+                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\\n';
             }
         }
         
-        helpText += '\n📍 *Silva Tech Nexus*';
+        helpText += '\\n📍 *Silva Tech Nexus*';
         
         try {
             await sock.sendMessage(jid, { text: helpText }, { quoted: message });
@@ -905,24 +939,24 @@ Time: ${now}
 
     async menuCommand(context) {
         const { jid, sock, message } = context;
-        const menuText = '┌─「 *Silva MD* 」─\\n' +
-                        '│\\n' +
-                        '│ ⚡ *BOT STATUS*\\n' +
-                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                        '│ • Prefix: ' + config.PREFIX + '\\n' +
-                        '│ • Version: ' + config.VERSION + '\\n' +
-                        '│\\n' +
-                        '│ 📋 *CORE COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'ping - Check bot status\\n' +
-                        '│ • ' + config.PREFIX + 'help - Show help\\n' +
-                        '│ • ' + config.PREFIX + 'owner - Show owner info\\n' +
-                        '│ • ' + config.PREFIX + 'menu - This menu\\n' +
-                        '│ • ' + config.PREFIX + 'plugins - List plugins\\n' +
-                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\n' +
-                        '│\\n' +
-                        '│ 🎨 *MEDIA COMMANDS*\\n' +
-                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\n' +
-                        '│\\n' +
+        const menuText = '┌─「 *Silva MD* 」─\\\\n' +
+                        '│\\\\n' +
+                        '│ ⚡ *BOT STATUS*\\\\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\\\\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\\\\n' +
+                        '│ • Version: ' + config.VERSION + '\\\\n' +
+                        '│\\\\n' +
+                        '│ 📋 *CORE COMMANDS*\\\\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\\\\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\\\\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\\\\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\\\\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\\\\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\\\\n' +
+                        '│\\\\n' +
+                        '│ 🎨 *MEDIA COMMANDS*\\\\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\\\\n' +
+                        '│\\\\n' +
                         '│ └─「 *SILVA TECH* 」';
         
         try {
@@ -940,7 +974,7 @@ Time: ${now}
             const latency = Date.now() - start;
             
             await sock.sendMessage(jid, {
-                text: '*Status Report*\\n\\n⚡ Latency: ' + latency + 'ms\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
+                text: '*Status Report*\\\\n\\\\n⚡ Latency: ' + latency + 'ms\\\\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\\\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\\\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌')
             }, { quoted: message });
         } catch (error) {
             botLogger.log('ERROR', 'Failed to send ping: ' + error.message);
@@ -952,7 +986,7 @@ Time: ${now}
         if (config.OWNER_NUMBER) {
             try {
                 await sock.sendMessage(jid, {
-                    text: '👑 *Bot Owner*\\n\\n📞 ' + config.OWNER_NUMBER + '\\n🤖 ' + config.BOT_NAME + '\\n⚡ v' + config.VERSION
+                    text: '👑 *Bot Owner*\\\\n\\\\n📞 ' + config.OWNER_NUMBER + '\\\\n🤖 ' + config.BOT_NAME + '\\\\n⚡ v' + config.VERSION
                 }, { quoted: message });
             } catch (error) {
                 botLogger.log('ERROR', 'Failed to send owner info: ' + error.message);
@@ -963,12 +997,12 @@ Time: ${now}
     async statsCommand(context) {
         const { jid, sock, message } = context;
         try {
-            const statsText = '📊 *Bot Statistics*\\n\\n' +
-                             '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\n' +
-                             '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\n' +
-                             '📦 Platform: ' + process.platform + '\\n' +
-                             '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\n' +
-                             '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\n' +
+            const statsText = '📊 *Bot Statistics*\\\\n\\\\n' +
+                             '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\\\\n' +
+                             '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\\\\n' +
+                             '📦 Platform: ' + process.platform + '\\\\n' +
+                             '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\\\\n' +
+                             '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\\\\n' +
                              '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION;
             
             await sock.sendMessage(jid, { text: statsText }, { quoted: message });
@@ -981,13 +1015,13 @@ Time: ${now}
         const { jid, sock, message } = context;
         try {
             const plugins = this.pluginManager.getCommandList();
-            let pluginsText = '📦 *Loaded Plugins*\\n\\nTotal: ' + plugins.length + '\\n\\n';
+            let pluginsText = '📦 *Loaded Plugins*\\\\n\\\\nTotal: ' + plugins.length + '\\\\n\\\\n';
             
             if (plugins.length === 0) {
-                pluginsText += 'No plugins loaded.\\nCheck silvaxlab folder.';
+                pluginsText += 'No plugins loaded.\\\\nCheck silvaxlab folder.';
             } else {
                 for (const plugin of plugins) {
-                    pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\n';
+                    pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\\\\n';
                 }
             }
             
@@ -1000,10 +1034,10 @@ Time: ${now}
     async startCommand(context) {
         const { jid, sock, message } = context;
         try {
-            const startText = '✨ *Welcome to Silva MD!*\\n\\n' +
-                             'I am an advanced WhatsApp bot with plugin support.\\n\\n' +
-                             'Mode: ' + (config.BOT_MODE || 'public') + '\\n' +
-                             'Prefix: ' + config.PREFIX + '\\n\\n' +
+            const startText = '✨ *Welcome to Silva MD!*\\\\n\\\\n' +
+                             'I am an advanced WhatsApp bot with plugin support.\\\\n\\\\n' +
+                             'Mode: ' + (config.BOT_MODE || 'public') + '\\\\n' +
+                             'Prefix: ' + config.PREFIX + '\\\\n\\\\n' +
                              'Type ' + config.PREFIX + 'help for commands';
             
             await sock.sendMessage(jid, { 
