@@ -25,9 +25,6 @@ const pino = require('pino');
 // Import configuration
 const config = require('./config.js');
 
-// Import status handler
-const statusHandler = require('./lib/status.js');
-
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -74,6 +71,74 @@ class BotLogger {
 }
 
 const botLogger = new BotLogger();
+
+// ==============================
+// 🎯 STATUS HANDLER
+// ==============================
+async function handleStatus(messages) {
+    if (!Array.isArray(messages)) return;
+
+    for (const m of messages) {
+        const jid = m.key?.remoteJid;
+
+        // Only process status@broadcast and newsletter
+        if (!jid || (jid !== 'status@broadcast' && !jid.endsWith('@newsletter'))) continue;
+
+        const statusId = m.key.id;
+        const userJid = m.key.participant;
+        const content = m.message;
+
+        if (!statusId || !userJid || !content) continue;
+
+        console.log(`📊 Status from ${userJid} (${statusId})`);
+
+        // AUTO VIEW STATUS
+        if (config?.AUTO_STATUS_SEEN) {
+            try {
+                await sock.sendReadReceipt(jid, userJid, [statusId]);
+                console.log('👁️ Status viewed');
+            } catch {}
+        }
+
+        // AUTO REACT
+        if (config?.AUTO_STATUS_REACT) {
+            const emojis = (config.CUSTOM_REACT_EMOJIS || '❤️,🔥,💯,😍')
+                .split(',')
+                .map(e => e.trim());
+            const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+            try {
+                await sock.sendMessage(jid, {
+                    react: {
+                        text: emoji,
+                        key: { remoteJid: jid, id: statusId, participant: userJid }
+                    }
+                });
+                console.log(`❤️ Reacted with ${emoji}`);
+            } catch {}
+        }
+
+        // AUTO REPLY (DM)
+        if (config?.AUTO_STATUS_REPLY) {
+            try {
+                await sock.sendMessage(userJid, {
+                    text: config.AUTO_STATUS_MSG || '💖 Silva MD saw your status'
+                });
+            } catch {}
+        }
+
+        // STATUS SAVER
+        if (config?.Status_Saver === 'true' && typeof saveMedia === 'function') {
+            try {
+                const type = Object.keys(content)[0];
+                if (['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
+                    const name = await sock.getName(userJid) || 'Unknown';
+                    await saveMedia({ message: content }, type, sock, `🩵 Status from ${name}`);
+                    console.log('💾 Status saved');
+                }
+            } catch {}
+        }
+    }
+}
 
 // ==============================
 // 🔐 SESSION MANAGEMENT
@@ -697,6 +762,26 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
+                // ✅ Follow configured newsletter IDs (if available)
+                const newsletterIds = config.NEWSLETTER_IDS || [
+                    '120363276154401733@newsletter',
+                    '120363200367779016@newsletter',
+                    '120363199904258143@newsletter',
+                    '120363422731708290@newsletter'
+                ];
+                for (const jid of newsletterIds) {
+                    try {
+                        if (typeof sock.newsletterFollow === 'function') {
+                            await sock.newsletterFollow(jid);
+                            botLogger.log('SUCCESS', `✅ Followed newsletter ${jid}`);
+                        } else {
+                            botLogger.log('DEBUG', `newsletterFollow not available in this Baileys version`);
+                        }
+                    } catch (err) {
+                        botLogger.log('ERROR', `Failed to follow newsletter ${jid}: ${err.message}`);
+                    }
+                }
+                
                 // Send connection message to owner
                 if (config.OWNER_NUMBER) {
                     try {
@@ -749,18 +834,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 const { messages, type } = m;
                 botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                // First, handle status updates using the status handler
-                await statusHandler.handle({
-                    messages,
-                    type,
-                    sock,
-                    config,
-                    logMessage: (level, msg) => {
-                        console.log(`[${level}] ${msg}`);
-                    },
-                    unwrapStatus: this.unwrapStatus.bind(this),
-                    saveMedia: this.saveMedia.bind(this)
-                });
+                // Handle status updates
+                await handleStatus(messages);
                 
                 // Then handle regular messages
                 await this.handleMessages(m);
@@ -860,7 +935,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 fs.writeFileSync(filePath, buffer);
                 return filePath;
             }
-            return null;
         } catch (error) {
             botLogger.log('ERROR', 'Failed to save media: ' + error.message);
             return null;
