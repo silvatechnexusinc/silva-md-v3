@@ -148,7 +148,7 @@ class FunctionsWrapper {
     }
 
     isOwner(sender) {
-        botLogger.log('DEBUG', `[OWNER CHECK] Checking if sender is owner: ${sender}`);
+        botLogger.log('DEBUG', `[SILVA CHECK] Checking if sender is Silva: ${sender}`);
         
         // First: If message is from the bot itself (fromMe), it's automatically owner
         // We'll handle this in the message handler by checking fromMe flag
@@ -161,11 +161,11 @@ class FunctionsWrapper {
             // Handle LID format: 81712071631074@lid
             phoneNumber = sender.split('@')[0];
             isLid = true;
-            botLogger.log('DEBUG', `[OWNER CHECK] Sender is LID: ${phoneNumber}`);
+            botLogger.log('DEBUG', `[SILVA CHECK] Sender is LID: ${phoneNumber}`);
         } else if (sender.includes('@s.whatsapp.net')) {
             // Handle standard JID format: 254700143167@s.whatsapp.net
             phoneNumber = sender.split('@')[0];
-            botLogger.log('DEBUG', `[OWNER CHECK] Sender is JID: ${phoneNumber}`);
+            botLogger.log('DEBUG', `[SILVA CHECK] Sender is JID: ${phoneNumber}`);
         } else if (sender.includes(':')) {
             // Handle other formats with colon
             phoneNumber = sender.split(':')[0];
@@ -175,13 +175,13 @@ class FunctionsWrapper {
         
         // Clean the phone number (remove non-digits)
         const cleanSender = phoneNumber.replace(/[^0-9]/g, '');
-        botLogger.log('DEBUG', `[OWNER CHECK] Cleaned sender: ${cleanSender}`);
+        botLogger.log('DEBUG', `[SILVA CHECK] Cleaned sender: ${cleanSender}`);
         
         // Check 1: Is this the bot's LID?
         if (isLid && this.botLid) {
             const cleanBotLid = this.botLid.replace(/[^0-9]/g, '');
             if (cleanSender === cleanBotLid) {
-                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot LID - GRANTING OWNER');
+                botLogger.log('DEBUG', '[SILVA CHECK] Sender is bot LID - GRANTING OWNER');
                 return true;
             }
         }
@@ -626,12 +626,7 @@ class SilvaBot {
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
-                shouldIgnoreJid: (jid) => {
-                    if (!jid || typeof jid !== 'string') {
-                        return false;
-                    }
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
-                },
+                shouldIgnoreJid: () => false,
                 getMessage: async (key) => {
                     try {
                         return await this.store.getMessage(key);
@@ -880,7 +875,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 const botJid = this.functions.botNumber + '@s.whatsapp.net';
                 await delay(1000);
                 await this.sock.sendMessage(botJid, {
-                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
+                    text: '🤖 *SILVA md Activated!*\nType ' + config.PREFIX + 'help for commands'
                 });
                 botLogger.log('INFO', 'Test message sent to detect LID');
             }
