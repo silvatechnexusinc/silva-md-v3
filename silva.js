@@ -73,69 +73,124 @@ class BotLogger {
 const botLogger = new BotLogger();
 
 // ==============================
-// 🎯 STATUS HANDLER
+// 🎯 STATUS HANDLER (FIXED)
 // ==============================
-async function handleStatus(messages) {
-    if (!Array.isArray(messages)) return;
+async function handleStatus(messages, sock, config, saveMedia) {
+    if (!Array.isArray(messages) || !sock) return;
 
-    for (const m of messages) {
+    // Filter only status and newsletter messages
+    const statusMessages = messages.filter(m => {
         const jid = m.key?.remoteJid;
+        return jid && (jid === 'status@broadcast' || jid.endsWith('@newsletter'));
+    });
 
-        // Only process status@broadcast and newsletter
-        if (!jid || (jid !== 'status@broadcast' && !jid.endsWith('@newsletter'))) continue;
+    if (statusMessages.length === 0) return;
 
-        const statusId = m.key.id;
-        const userJid = m.key.participant;
-        const content = m.message;
+    // Process each status message
+    for (const m of statusMessages) {
+        try {
+            const jid = m.key.remoteJid;
+            const statusId = m.key.id;
+            const userJid = m.key.participant;
+            const content = m.message;
 
-        if (!statusId || !userJid || !content) continue;
+            if (!statusId || !userJid || !content) continue;
 
-        console.log(`📊 Status from ${userJid} (${statusId})`);
+            // Log status detection
+            console.log(`📊 Status from ${userJid} (${statusId.substring(0, 8)}...)`);
 
-        // AUTO VIEW STATUS
-        if (config?.AUTO_STATUS_SEEN) {
-            try {
-                await sock.sendReadReceipt(jid, userJid, [statusId]);
-                console.log('👁️ Status viewed');
-            } catch {}
-        }
-
-        // AUTO REACT
-        if (config?.AUTO_STATUS_REACT) {
-            const emojis = (config.CUSTOM_REACT_EMOJIS || '❤️,🔥,💯,😍')
-                .split(',')
-                .map(e => e.trim());
-            const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-            try {
-                await sock.sendMessage(jid, {
-                    react: {
-                        text: emoji,
-                        key: { remoteJid: jid, id: statusId, participant: userJid }
-                    }
-                });
-                console.log(`❤️ Reacted with ${emoji}`);
-            } catch {}
-        }
-
-        // AUTO REPLY (DM)
-        if (config?.AUTO_STATUS_REPLY) {
-            try {
-                await sock.sendMessage(userJid, {
-                    text: config.AUTO_STATUS_MSG || '💖 Silva MD saw your status'
-                });
-            } catch {}
-        }
-
-        // STATUS SAVER
-        if (config?.Status_Saver === 'true' && typeof saveMedia === 'function') {
-            try {
-                const type = Object.keys(content)[0];
-                if (['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
-                    const name = await sock.getName(userJid) || 'Unknown';
-                    await saveMedia({ message: content }, type, sock, `🩵 Status from ${name}`);
-                    console.log('💾 Status saved');
+            // AUTO VIEW STATUS - FIXED
+            if (config?.AUTO_STATUS_SEEN === true || config?.AUTO_STATUS_SEEN === 'true') {
+                try {
+                    // Send read receipt for status
+                    await sock.sendReadReceipt(jid, userJid, [statusId]);
+                    console.log('👁️ Status viewed');
+                    await delay(500); // Small delay to avoid rate limiting
+                } catch (e) {
+                    console.log('⚠️ Failed to view status:', e.message);
                 }
-            } catch {}
+            }
+
+            // AUTO REACT - FIXED
+            if (config?.AUTO_STATUS_REACT === true || config?.AUTO_STATUS_REACT === 'true') {
+                try {
+                    const emojis = (config.CUSTOM_REACT_EMOJIS || '❤️,🔥,💯,😍')
+                        .split(',')
+                        .map(e => e.trim())
+                        .filter(e => e);
+                    
+                    if (emojis.length > 0) {
+                        const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+                        
+                        await sock.sendMessage(jid, {
+                            react: {
+                                text: emoji,
+                                key: { 
+                                    remoteJid: jid, 
+                                    id: statusId, 
+                                    participant: userJid,
+                                    fromMe: false
+                                }
+                            }
+                        });
+                        console.log(`❤️ Reacted with ${emoji}`);
+                        await delay(500);
+                    }
+                } catch (e) {
+                    console.log('⚠️ Failed to react:', e.message);
+                }
+            }
+
+            // AUTO REPLY (DM) - FIXED
+            if (config?.AUTO_STATUS_REPLY === true || config?.AUTO_STATUS_REPLY === 'true') {
+                try {
+                    const replyMsg = config.AUTO_STATUS_MSG || '💖 Silva MD saw your status';
+                    await sock.sendMessage(userJid, { text: replyMsg });
+                    console.log(`💬 Replied to status`);
+                    await delay(500);
+                } catch (e) {
+                    console.log('⚠️ Failed to reply:', e.message);
+                }
+            }
+
+            // STATUS SAVER - FIXED
+            if ((config?.Status_Saver === true || config?.Status_Saver === 'true') && saveMedia) {
+                try {
+                    const messageType = getContentType(content);
+                    const mediaTypes = ['imageMessage', 'videoMessage', 'audioMessage'];
+                    
+                    if (messageType && mediaTypes.includes(messageType)) {
+                        const name = await sock.getName(userJid).catch(() => 'Unknown');
+                        const caption = `🩵 Status from ${name}`;
+                        
+                        // Download media
+                        const buffer = await downloadMediaMessage(
+                            { message: content, key: m.key },
+                            'buffer',
+                            {},
+                            { logger, reuploadRequest: sock.updateMediaMessage }
+                        );
+                        
+                        // Save to file
+                        const tempDir = './temp';
+                        if (!fs.existsSync(tempDir)) {
+                            fs.mkdirSync(tempDir, { recursive: true });
+                        }
+                        
+                        const ext = messageType === 'imageMessage' ? '.jpg' : 
+                                   messageType === 'videoMessage' ? '.mp4' : '.mp3';
+                        const filename = `status_${Date.now()}_${userJid.split('@')[0]}${ext}`;
+                        const filePath = path.join(tempDir, filename);
+                        
+                        fs.writeFileSync(filePath, buffer);
+                        console.log(`💾 Status saved: ${filename}`);
+                    }
+                } catch (e) {
+                    console.log('⚠️ Failed to save status:', e.message);
+                }
+            }
+        } catch (error) {
+            console.log('❌ Status handler error:', error.message);
         }
     }
 }
@@ -625,6 +680,10 @@ class SilvaBot {
         this.reconnectDelay = 5000;
         this.keepAliveInterval = null;
         
+        // Status processing queue to prevent flooding
+        this.statusQueue = [];
+        this.isProcessingStatus = false;
+        
         // Built-in commands
         this.commands = {
             help: this.helpCommand.bind(this),
@@ -762,23 +821,51 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
-                // ✅ Follow configured newsletter IDs (if available)
-                const newsletterIds = config.NEWSLETTER_IDS || [
-                    '120363276154401733@newsletter',
-                    '120363200367779016@newsletter',
-                    '120363199904258143@newsletter',
-                    '120363422731708290@newsletter'
-                ];
-                for (const jid of newsletterIds) {
-                    try {
-                        if (typeof sock.newsletterFollow === 'function') {
-                            await sock.newsletterFollow(jid);
-                            botLogger.log('SUCCESS', `✅ Followed newsletter ${jid}`);
-                        } else {
-                            botLogger.log('DEBUG', `newsletterFollow not available in this Baileys version`);
+                // ✅ Follow configured newsletter IDs (if available) - WITH ERROR HANDLING
+                if (config.NEWSLETTER_IDS && Array.isArray(config.NEWSLETTER_IDS)) {
+                    botLogger.log('INFO', '📰 Attempting to follow newsletters...');
+                    
+                    for (const jid of config.NEWSLETTER_IDS) {
+                        try {
+                            if (typeof sock.newsletterFollow === 'function') {
+                                await sock.newsletterFollow(jid);
+                                botLogger.log('SUCCESS', `✅ Followed newsletter ${jid}`);
+                                await delay(1000); // Delay between follows
+                            } else {
+                                botLogger.log('DEBUG', `newsletterFollow not available in this Baileys version`);
+                                break; // Don't try others if function doesn't exist
+                            }
+                        } catch (err) {
+                            if (err.message.includes('already subscribed')) {
+                                botLogger.log('INFO', `ℹ️ Already subscribed to ${jid}`);
+                            } else {
+                                botLogger.log('ERROR', `Failed to follow newsletter ${jid}: ${err.message}`);
+                            }
+                            await delay(1000);
                         }
-                    } catch (err) {
-                        botLogger.log('ERROR', `Failed to follow newsletter ${jid}: ${err.message}`);
+                    }
+                } else {
+                    // Use default newsletter IDs if none configured
+                    const defaultNewsletterIds = [
+                        '120363276154401733@newsletter',
+                        '120363200367779016@newsletter',
+                        '120363199904258143@newsletter',
+                        '120363422731708290@newsletter'
+                    ];
+                    
+                    for (const jid of defaultNewsletterIds) {
+                        try {
+                            if (typeof sock.newsletterFollow === 'function') {
+                                await sock.newsletterFollow(jid);
+                                botLogger.log('SUCCESS', `✅ Followed newsletter ${jid}`);
+                                await delay(1000);
+                            } else {
+                                break;
+                            }
+                        } catch (err) {
+                            botLogger.log('ERROR', `Failed to follow newsletter ${jid}: ${err.message}`);
+                            await delay(1000);
+                        }
                     }
                 }
                 
@@ -802,6 +889,8 @@ class SilvaBot {
 Mode: ${config.BOT_MODE || 'public'}
 Time: ${now}
 Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
+Status Auto-View: ${config.AUTO_STATUS_SEEN ? '✅' : '❌'}
+Status Auto-React: ${config.AUTO_STATUS_REACT ? '✅' : '❌'}
 Connected Number: ${this.functions.botNumber || 'Unknown'}
                             `.trim();
 
@@ -818,6 +907,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                                     }
                                 }
                             });
+                            await delay(1000);
                         }
                         botLogger.log('INFO', 'Sent connected message to owner(s)');
                     } catch (error) {
@@ -832,13 +922,36 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         sock.ev.on('messages.upsert', async (m) => {
             try {
                 const { messages, type } = m;
-                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                // Handle status updates
-                await handleStatus(messages);
-                
-                // Then handle regular messages
-                await this.handleMessages(m);
+                if (messages && messages.length > 0) {
+                    // Filter out status messages first
+                    const statusMessages = messages.filter(msg => {
+                        const jid = msg.key?.remoteJid;
+                        return jid && (jid === 'status@broadcast' || jid.endsWith('@newsletter'));
+                    });
+                    
+                    const regularMessages = messages.filter(msg => {
+                        const jid = msg.key?.remoteJid;
+                        return jid && !jid.includes('status@broadcast') && !jid.endsWith('@newsletter');
+                    });
+                    
+                    // Process status messages separately with error handling
+                    if (statusMessages.length > 0) {
+                        botLogger.log('MESSAGE', `📥 Received ${statusMessages.length} status update(s)`);
+                        
+                        // Use queue to prevent flooding
+                        this.statusQueue.push(...statusMessages);
+                        if (!this.isProcessingStatus) {
+                            this.processStatusQueue();
+                        }
+                    }
+                    
+                    // Process regular messages
+                    if (regularMessages.length > 0) {
+                        botLogger.log('MESSAGE', `📥 Received ${regularMessages.length} regular message(s) of type: ${type}`);
+                        await this.handleMessages({ messages: regularMessages, type });
+                    }
+                }
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
@@ -900,25 +1013,38 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         });
     }
 
-    // Utility method to unwrap status message
-    unwrapStatus(message) {
+    // Process status queue to prevent flooding
+    async processStatusQueue() {
+        if (this.isProcessingStatus || this.statusQueue.length === 0) return;
+        
+        this.isProcessingStatus = true;
+        
         try {
-            if (message.message?.protocolMessage?.type === 14) {
-                const statusMessage = message.message.protocolMessage;
-                return {
-                    key: message.key,
-                    message: statusMessage,
-                    isStatus: true
-                };
+            // Process status messages in batches
+            while (this.statusQueue.length > 0) {
+                const batch = this.statusQueue.splice(0, 5); // Process 5 at a time
+                
+                await handleStatus(
+                    batch,
+                    this.sock,
+                    config,
+                    this.saveMedia.bind(this)
+                );
+                
+                // Delay between batches to prevent rate limiting
+                if (this.statusQueue.length > 0) {
+                    await delay(2000);
+                }
             }
-            return null;
         } catch (error) {
-            return null;
+            botLogger.log('ERROR', 'Status queue processing error: ' + error.message);
+        } finally {
+            this.isProcessingStatus = false;
         }
     }
 
     // Utility method to save media
-    async saveMedia(message, filename) {
+    async saveMedia(message, type, sock, caption) {
         try {
             if (getContentType(message.message)) {
                 const buffer = await downloadMediaMessage(message, 'buffer', {}, {
@@ -931,8 +1057,19 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     fs.mkdirSync(tempDir, { recursive: true });
                 }
                 
-                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
+                const ext = type === 'imageMessage' ? '.jpg' : 
+                           type === 'videoMessage' ? '.mp4' : '.mp3';
+                const filename = `status_${Date.now()}${ext}`;
+                const filePath = path.join(tempDir, filename);
+                
                 fs.writeFileSync(filePath, buffer);
+                
+                // If caption provided, save as text file too
+                if (caption) {
+                    const txtPath = filePath.replace(ext, '.txt');
+                    fs.writeFileSync(txtPath, caption);
+                }
+                
                 return filePath;
             }
         } catch (error) {
@@ -1306,45 +1443,48 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         if (!action) {
             await sock.sendMessage(jid, {
                 text: `📊 *Status Auto Settings*\n\n` +
-                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
-                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
+                      `Auto View: ${config.AUTO_STATUS_SEEN ? '✅ Enabled' : '❌ Disabled'}\n` +
+                      `Auto React: ${config.AUTO_STATUS_REACT ? '✅ Enabled' : '❌ Disabled'}\n` +
+                      `Auto Reply: ${config.AUTO_STATUS_REPLY ? '✅ Enabled' : '❌ Disabled'}\n` +
+                      `Status Saver: ${config.Status_Saver ? '✅ Enabled' : '❌ Disabled'}\n\n` +
                       `Commands:\n` +
-                      `• ${config.PREFIX}statusview on - Enable both\n` +
-                      `• ${config.PREFIX}statusview off - Disable both\n` +
-                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
-                      `• ${config.PREFIX}statusview like - Toggle auto-like`
+                      `• ${config.PREFIX}statusview on - Enable all\n` +
+                      `• ${config.PREFIX}statusview off - Disable all\n` +
+                      `• ${config.PREFIX}statusview test - Test status functionality`
             }, { quoted: message });
             return;
         }
         
         switch(action) {
             case 'on':
-                this.autoStatusView = true;
-                this.autoStatusLike = true;
+                config.AUTO_STATUS_SEEN = true;
+                config.AUTO_STATUS_REACT = true;
+                config.AUTO_STATUS_REPLY = true;
+                config.Status_Saver = true;
                 await sock.sendMessage(jid, {
-                    text: '✅ Auto-view and auto-like enabled for status updates.'
+                    text: '✅ All status auto-features enabled!'
                 }, { quoted: message });
                 break;
                 
             case 'off':
-                this.autoStatusView = false;
-                this.autoStatusLike = false;
+                config.AUTO_STATUS_SEEN = false;
+                config.AUTO_STATUS_REACT = false;
+                config.AUTO_STATUS_REPLY = false;
+                config.Status_Saver = false;
                 await sock.sendMessage(jid, {
-                    text: '❌ Auto-view and auto-like disabled.'
+                    text: '❌ All status auto-features disabled.'
                 }, { quoted: message });
                 break;
                 
-            case 'view':
-                this.autoStatusView = !this.autoStatusView;
+            case 'test':
                 await sock.sendMessage(jid, {
-                    text: `Auto-view: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            case 'like':
-                this.autoStatusLike = !this.autoStatusLike;
-                await sock.sendMessage(jid, {
-                    text: `Auto-like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}`
+                    text: '📊 *Status Handler Test*\n\n' +
+                          'Current Settings:\n' +
+                          `• Auto View: ${config.AUTO_STATUS_SEEN ? '✅' : '❌'}\n` +
+                          `• Auto React: ${config.AUTO_STATUS_REACT ? '✅' : '❌'}\n` +
+                          `• Auto Reply: ${config.AUTO_STATUS_REPLY ? '✅' : '❌'}\n` +
+                          `• Status Saver: ${config.Status_Saver ? '✅' : '❌'}\n\n` +
+                          'The bot will automatically process status updates when received.'
                 }, { quoted: message });
                 break;
                 
@@ -1393,6 +1533,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         '│ • Prefix: ' + config.PREFIX + '\n' +
                         '│ • Version: ' + config.VERSION + '\n' +
                         '│ • Anti-delete: ' + (this.antiDeleteEnabled ? '✅' : '❌') + '\n' +
+                        '│ • Status Auto-View: ' + (config.AUTO_STATUS_SEEN ? '✅' : '❌') + '\n' +
                         '│\n' +
                         '│ 📋 *CORE COMMANDS*\n' +
                         '│ • ' + config.PREFIX + 'ping - Check bot status\n' +
@@ -1418,7 +1559,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
+            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n👁️ Status Auto-View: ' + (config.AUTO_STATUS_SEEN ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
         }, { quoted: message });
     }
 
@@ -1459,8 +1600,10 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          '📦 Platform: ' + process.platform + '\n' +
                          '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
                          '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
-                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
-                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
+                         '👁️ Auto-View: ' + (config.AUTO_STATUS_SEEN ? '✅' : '❌') + '\n' +
+                         '❤️ Auto-React: ' + (config.AUTO_STATUS_REACT ? '✅' : '❌') + '\n' +
+                         '💬 Auto-Reply: ' + (config.AUTO_STATUS_REPLY ? '✅' : '❌') + '\n' +
+                         '💾 Status Saver: ' + (config.Status_Saver ? '✅' : '❌') + '\n' +
                          '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
                          '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
                          '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
@@ -1491,7 +1634,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          'I am an advanced WhatsApp bot with plugin support.\n\n' +
                          'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
                          'Prefix: ' + config.PREFIX + '\n' +
-                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n' +
+                         'Status Auto-View: ' + (config.AUTO_STATUS_SEEN ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
                          'Type ' + config.PREFIX + 'help for commands';
         
         await sock.sendMessage(jid, { 
